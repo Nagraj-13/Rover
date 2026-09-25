@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# YOLO weights & runs
+*.pt
+*.onnx
+runs/
+.cache/

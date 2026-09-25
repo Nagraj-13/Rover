@@ -1,5 +1,5 @@
 # ============================================================
-# Raspberry Pi Rover Dependencies
+# Raspberry Pi 5 Rover Dependencies
 # ============================================================
 
 # Web framework for the rover control interface and API
@@ -8,13 +8,18 @@ Flask>=3.0.0
 # GPIO interface for dual IBT-2 motor driver control
 gpiozero>=2.0
 
-# Pin factory backend for gpiozero on Raspberry Pi OS (Bookworm and newer)
+# Pin factory backend for gpiozero on Raspberry Pi OS (Bookworm / Trixie)
 lgpio>=0.2.2.0
+
+# Computer Vision & Real-time YOLO Object Detection
+ultralytics>=8.1.0
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
 
 # Raspberry Pi Camera library (libcamera interface)
 # NOTE: picamera2 relies on native C++ libcamera bindings.
 # On Raspberry Pi OS, it is strongly recommended to install system packages:
-#   sudo apt install -y python3-picamera2
+#   sudo apt install -y python3-picamera2 python3-opencv python3-gpiozero python3-lgpio
 # And create your virtual environment with:
 #   python3 -m venv --system-site-packages venv
 # Alternatively, if installing inside the environment:
