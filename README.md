@@ -109,8 +109,14 @@ source venv/bin/activate
 
 ### 5. Install Python Packages
 
-Install Flask, Ultralytics YOLO, and supporting libraries:
+> [!TIP]
+> The Raspberry Pi 5 uses an ARM64 CPU (not an NVIDIA CUDA GPU). Installing the **CPU-only** PyTorch wheel first prevents pip from downloading 3GB+ of useless NVIDIA CUDA binaries (`nvidia_cudnn`, `nvidia_cublas`, etc.) that fill up your SD card:
+
 ```bash
+# 1. Install lightweight CPU-only PyTorch for ARM64
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+# 2. Install remaining rover packages
 pip install -r requirements.txt
 ```
 
@@ -281,6 +287,24 @@ If one side turns backward when driving forward:
 - Ensure the ribbon cable is seated firmly with contacts facing the motherboard PCB.
 - Verify with `rpicam-hello --list-cameras`.
 - Do not use `MJPEGEncoder(num_buffers=4)` on Raspberry Pi 5. The codebase uses `MJPEGEncoder()`.
+
+### "No space left on device" during pip install
+By default, pip on ARM64 may attempt to download massive NVIDIA CUDA packages (>3 GB) that are unnecessary on Raspberry Pi.
+1. Clear cached downloads:
+   ```bash
+   pip cache purge
+   sudo apt clean
+   ```
+2. If your SD card partition is not fully expanded:
+   ```bash
+   sudo raspi-config
+   # Advanced Options -> Expand Filesystem -> Finish -> Reboot
+   ```
+3. Install the CPU-only PyTorch wheel:
+   ```bash
+   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+   pip install -r requirements.txt
+   ```
 
 ---
 
