@@ -1,17 +1,23 @@
-# Raspberry Pi 5 AI Rover
+# EdgeRover — Raspberry Pi 5 AI Rover
 
-An autonomous and teleoperated 4-wheel drive rover powered by a **Raspberry Pi 5**, featuring live **Raspberry Pi Camera 3** video streaming, dual **IBT-2 (BTS7960)** high-power motor drivers, real-time **YOLO object detection**, and a responsive mobile web controller interface.
+An edge-first autonomous and teleoperated 4-wheel drive (4WD) robotic platform powered by a **Raspberry Pi 5**. It bridges real-time **Picamera2** video streaming, dual **IBT-2 (BTS7960)** high-power motor drivers, **VL53L0X Time-of-Flight laser distance safety**, **Ultralytics YOLO object detection with ByteTrack tracking**, and a **lightweight, zero-build HTML5/CSS3/JavaScript Ground Control Station**.
 
 ---
 
 ## Key Highlights
 
-- **Hardware Acceleration:** Built for Raspberry Pi 5 (4GB / 8GB) with quad-core ARM Cortex-A76 processor.
-- **Differential Drive Control:** Dual IBT-2 (BTS7960) H-bridges controlling 4 geared DC motors with hardware/software PWM speed control.
-- **Low-Latency Video:** 720p MJPEG camera stream via the official modern `picamera2` / `libcamera` stack.
-- **Real-Time AI Vision:** Real-time YOLO object detection (`yolov8n.pt`) with client-side canvas overlay (15–25+ FPS without video latency).
-- **Safety Watchdog:** Hardware failsafe automatically halts motors if network communication drops for >600ms.
-- **Mobile-First Web UI:** Zero-install touch controller with hold-to-move pointer capture and desktop keyboard shortcuts (WASD / Arrows).
+- **Hardware Acceleration:** Engineered for Raspberry Pi 5 (4GB / 8GB) with quad-core ARM Cortex-A76 processor.
+- **Differential Skid-Steer Drive:** Dual IBT-2 (BTS7960) 43A H-bridges controlling 4 geared DC motors with hardware/software PWM speed regulation.
+- **Low-Latency Camera Feed:** 720p MJPEG camera stream via the official modern `picamera2` / `libcamera` stack (~30 FPS).
+- **Embedded AI Perception:** Real-time YOLO object detection (`yolov8n.pt` / `yolo26n`) running in a decoupled, zero-lag background worker (15–25+ FPS on Pi 5 CPU).
+- **Persistent Multi-Object Tracking & Locking:** ByteTrack tracking assigns persistent IDs (`#1`, `#2`) across frames; click or tap on any bounding box to lock target.
+- **Monocular Distance Estimation:** Pinhole camera geometry calibrated for Pi Camera 3 estimates object distance in centimeters in real-time.
+- **Deterministic Hardware Safety Interceptor:**
+  - Front **VL53L0X Time-of-Flight laser sensor** automatically suppresses forward drive commands if an obstacle is within `<30 cm`.
+  - Software watchdog automatically stops all motors if network control heartbeat is lost for `>600 ms`.
+- **Zero-Dependency Lightweight Web GCS:** Built entirely in Vanilla HTML5, modern cyberpunk glassmorphic CSS3, and ES6+ JavaScript. **Zero Node.js, zero npm, and zero build compilation required** on the Raspberry Pi.
+- **In-Browser Audio Alerts:** Web Audio API synthesizer generates procedural proximity warning chirps and security sirens without external audio files.
+- **Surveillance Evidence Capture:** Captures high-resolution annotated snapshots with structured JSON metadata for surveillance audits and Telegram alerting.
 
 ---
 
@@ -19,7 +25,8 @@ An autonomous and teleoperated 4-wheel drive rover powered by a **Raspberry Pi 5
 
 | Document | Purpose |
 | :--- | :--- |
-| **[PROJECT_CONTEXT.md](PROJECT_CONTEXT.md)** | Deep architectural principles, hardware history, design philosophy, and long-term autonomy roadmaps. |
+| **[PRD.md](PRD.md)** | **Product Requirements Document (PRD) & System Architecture Specification.** Full 4-tier hybrid intelligence design, World State schema, and research roadmap. |
+| **[PROJECT_CONTEXT.md](PROJECT_CONTEXT.md)** | Deep architectural history, motor driver pairing, Picamera2 quirks, and design philosophy. |
 | **[circuits/README.md](circuits/README.md)** | Hardware wiring index, system schematics, and electrical safety guidelines. |
 | **[circuits/gpio_pinout.md](circuits/gpio_pinout.md)** | Full 40-pin Raspberry Pi 5 GPIO mapping and physical-to-BCM pin allocations. |
 | **[circuits/motor_driver_wiring.md](circuits/motor_driver_wiring.md)** | IBT-2 (BTS7960) dual motor driver schematics, logic connections, and motor pairing. |
@@ -45,13 +52,13 @@ An autonomous and teleoperated 4-wheel drive rover powered by a **Raspberry Pi 5
 
 ## Step-by-Step Raspberry Pi Setup Guide
 
-Follow these steps to set up and run the rover software on your Raspberry Pi 5.
+Follow these steps to set up and run EdgeRover on your Raspberry Pi 5.
 
 ### 1. Operating System Preparation
 
 Ensure your Raspberry Pi 5 is running **Raspberry Pi OS (64-bit)** (Debian 12 Bookworm or Debian 13 Trixie).
 
-Update the package lists and upgrade all system packages:
+Update package lists and upgrade system packages:
 ```bash
 sudo apt update && sudo apt full-upgrade -y
 ```
@@ -110,13 +117,13 @@ source venv/bin/activate
 ### 5. Install Python Packages
 
 > [!TIP]
-> The Raspberry Pi 5 uses an ARM64 CPU (not an NVIDIA CUDA GPU). Installing the **CPU-only** PyTorch wheel first prevents pip from downloading 3GB+ of useless NVIDIA CUDA binaries (`nvidia_cudnn`, `nvidia_cublas`, etc.) that fill up your SD card:
+> The Raspberry Pi 5 uses an ARM64 CPU. Installing the **CPU-only** PyTorch wheel first prevents pip from downloading 3GB+ of unnecessary NVIDIA CUDA binaries (`nvidia_cudnn`, `nvidia_cublas`, etc.):
 
 ```bash
 # 1. Install lightweight CPU-only PyTorch for ARM64
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
-# 2. Install remaining rover packages
+# 2. Install remaining rover packages (Ultralytics YOLO, VL53L0X driver, Flask)
 pip install -r requirements.txt
 ```
 
@@ -124,32 +131,48 @@ pip install -r requirements.txt
 
 ### 6. Hardware Verification Tests
 
-Before starting the server, run quick diagnostic tests:
+Run these quick diagnostic commands to verify all connected hardware before launching the server:
 
 #### A. Test Camera Detection
 ```bash
 rpicam-hello --list-cameras
 ```
-*Expected: Detects `imx708` on `CAM/DISP0`.*
+*Expected: Detects `imx708` on `CAM/DISP0` (or `CAM/DISP1`).*
 
-#### B. Test Python Picamera2 & GPIO
+#### B. Test VL53L0X Distance Sensor on I2C
+```bash
+i2cdetect -y 1
+```
+*Expected: Address `29` appears on the I2C grid.*
+
+#### C. Test Python Libraries & Drivers
 ```bash
 python3 -c "from picamera2 import Picamera2; print('Picamera2 OK')"
 python3 -c "from gpiozero import Motor; print('GPIOZero OK')"
+python3 -c "from sensors import DistanceSensor; s = DistanceSensor(); s.start(); import time; time.sleep(0.1); print('Distance:', s.get_distance_cm(), 'cm'); s.stop()"
 ```
-*Expected: Prints `Picamera2 OK` and `GPIOZero OK`.*
 
-#### C. Test YOLO Vision Module
+#### D. Run the Vision Subsystem Test Suite
 ```bash
-python3 -c "from vision import YOLODetector; d = YOLODetector(); print('YOLO Available:', d.get_status()['available'])"
+python -u -m vision.test_detector
 ```
-*Expected: Prints `YOLO Available: True`.*
+*Expected: Executes the 6-stage test suite validating coordinate normalization, target locking, steering error math, and evidence capture.*
 
 ---
 
-### 7. Run the Rover Application
+### 7. Optional: Optimize YOLO for Maximum Pi 5 Speed (NCNN Export)
 
-Start the control server:
+To achieve the fastest possible inference (~67ms / 15+ FPS) on the Pi 5's Cortex-A76 CPU, convert the PyTorch model to **NCNN**:
+```bash
+python -m vision.export --model yolov8n.pt --format ncnn --imgsz 320
+```
+This automatically exports `yolov8n_ncnn_model` and runs a local benchmark.
+
+---
+
+### 8. Run the Rover Application
+
+Start the server:
 ```bash
 python3 app.py
 ```
@@ -159,57 +182,84 @@ Find your Raspberry Pi's local IP address:
 hostname -I
 ```
 
-Open a web browser on any phone, tablet, or laptop connected to the same Wi-Fi network:
+Open a web browser on any phone, tablet, or laptop on the same Wi-Fi network:
 ```text
+http://<YOUR_PI_IP>:8080/
+# or
 http://<YOUR_PI_IP>:8080/rover
 ```
 
 ---
 
-## Web Interface & Controls
+## Ground Control Station (GCS) User Guide
+
+The dashboard is a single-page application organized into **5 dedicated tabs**:
 
 ```text
-┌───────────────────────────────────────────────┐
-│ Rover Control                    ● Connected  │
-├───────────────────────────────────────────────┤
-│                                               │
-│                 LIVE CAMERA                   │
-│             [ YOLO Canvas Overlay ]           │
-│                                               │
-├───────────────────────────────────────────────┤
-│ 🎯 YOLO Object Detection              [ON/OFF]│
-│ Inference: 28 ms | Rate: 22 FPS | Objects: 2  │
-│ Recognized: [PERSON 89%] [CUP 74%]            │
-├───────────────────────────────────────────────┤
-│                      ▲                        │
-│                   ◀ STOP ▶                    │
-│                      ▼                        │
-│                                               │
-│ Motor Speed: ────●───────── 30%               │
-└───────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 🛰️ EDGEROVER GCS    ● ONLINE (14ms)      [MODE: MANUAL]     🔊 Audio ON     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ [ 📹 Live Teleop ]  [ 📋 Missions ]  [ 🚨 Event Log ]  [ 📊 Sensors ]  [ ⚙️ ]│
+├─────────────────────────────────────────┬───────────────────────────────────┤
+│                                         │ NATURAL LANGUAGE DISPATCH         │
+│   LIVE CAMERA STREAM (720p)             │ ┌───────────────────────────┬───┐ │
+│   ┌─────────────────────────────────┐   │ │ "Move forward 2s"         │ ▶ │ │
+│   │ [#1 PERSON 94% [140cm]]         │   │ └───────────────────────────┴───┘ │
+│   │ ┌──────────────┐                │   ├───────────────────────────────────┤
+│   │ │              │                │   │ REAL-TIME TELEMETRY               │
+│   │ │              │                │   │ Front Distance:   124 cm [CLEAR]  │
+│   │ └──────────────┘                │   │ Battery Level:    84% (12.3V)     │
+│   │              (+) Reticle        │   │ Motor Throttle:   [====O====] 35% │
+│   └─────────────────────────────────┘   ├───────────────────────────────────┤
+│   FPS: 22 FPS | Detections: 1           │ DIRECTIONAL D-PAD                 │
+│   [ 📷 Snap Evidence ]                  │                ▲ [W]              │
+│                                         │         ◀ [A]  ■ STOP   ▶ [D]     │
+│   ⚠️ PROXIMITY ALERT (<30cm)            │                ▼ [S]              │
+│                                         ├───────────────────────────────────┤
+│                                         │ [ 🛑 EMERGENCY MOTOR STOP (SPACE)]│
+└─────────────────────────────────────────┴───────────────────────────────────┘
 ```
 
-### Driving Controls
-- **Touch / Mobile:** Press and hold any direction button (`▲`, `▼`, `◀`, `▶`) to drive. Releasing the button automatically stops the rover.
-- **Desktop Keyboard:**
-  - `W` or `Arrow Up`: Drive Forward
-  - `S` or `Arrow Down`: Drive Backward
-  - `A` or `Arrow Left`: Turn Left (pivot)
-  - `D` or `Arrow Right`: Turn Right (pivot)
-  - Releasing key stops the rover.
-- **Speed Slider:** Adjust motor PWM output dynamically from 10% to 100% (default 30%).
-- **Emergency STOP:** Large red button instantly stops both motor drivers.
+### Tab 1: Live Teleop & Tactical HUD
+- **Camera Feed:** Real-time 720p low-latency video.
+- **Tactical Canvas HUD:** 
+  - Dynamic corner brackets with identification badges (`#1 PERSON 94% [140cm]`).
+  - Crosshair reticle and range markers.
+  - **Proximity Radar Arc:** Warns in amber at `<60cm` and flashes red at `<30cm`.
+  - **Touch-to-Lock Target:** Tap or click on any bounding box to lock target for tracking.
+- **Driving Controls:**
+  - **Mobile Touch:** Press and hold `▲`, `▼`, `◀`, `▶`. The Pointer Events API (`setPointerCapture`) guarantees motors halt even if your finger slides off the button.
+  - **Desktop Keyboard:** `W` (Forward), `S` (Backward), `A` (Left), `D` (Right), `Spacebar` (Emergency Stop).
+  - **Speed Throttle:** Adjust motor PWM from 15% to 100% dynamically.
+  - **Master E-Stop:** Large red button instantly terminates motor PWM.
+- **Natural Language Command Bar:** Type instructions like *"move forward"*, *"turn left"*, *"stop"*, or *"capture photo"*.
+- **Snap Evidence:** Manually trigger a high-resolution snapshot with bounding box overlays.
 
-### YOLO AI Detection
-- Toggle the switch on the **YOLO Object Detection** card.
-- Live bounding boxes, center crosshairs, and confidence percentages render in real-time on the camera feed.
-- Fine-tune detection sensitivity with the **Min Confidence** slider (15% to 85%).
+### Tab 2: Missions & Autonomy
+- Strategic mission prompt input (e.g., *"Patrol warehouse perimeter. Alert if person detected"*).
+- Pre-configured mission chips for quick tactical dispatch.
+- Visual waypoint checklist and mission execution progress.
+
+### Tab 3: Event Log & Evidence Gallery
+- Chronological stream of surveillance events (`INFO`, `WARNING`, `CRITICAL`).
+- Displays timestamps, trigger reason, and thumbnail evidence previews.
+
+### Tab 4: Sensors & System Diagnostics
+- **VL53L0X Laser Distance Bar:** Real-time visual gauge showing distance and 30cm cutoff indicator.
+- **CPU Thermals:** Raspberry Pi 5 temperature readout with thermal throttling indicator.
+- **RAM & Disk Utilization:** Real-time system resource health.
+- **12V Drive Battery:** Voltage estimation and charge state.
+
+### Tab 5: Settings & Configuration
+- YOLO Object Detection toggle (enables/disables inference thread on the fly).
+- Confidence threshold slider (10% to 90%).
+- External API keys (Groq API, Telegram Bot Token).
 
 ---
 
 ## Running as a Background Service (Auto-Start on Boot)
 
-To ensure the rover automatically starts whenever the Raspberry Pi powers on, set up a `systemd` service:
+To have the rover start automatically whenever the Raspberry Pi powers on, configure a `systemd` service:
 
 1. Create a service file:
 ```bash
@@ -219,7 +269,7 @@ sudo nano /etc/systemd/system/rover.service
 2. Paste the following configuration (replace `pi` with your username if different):
 ```ini
 [Unit]
-Description=Raspberry Pi 5 AI Rover Control Server
+Description=EdgeRover Ground Control & AI Vision Server
 After=network.target
 
 [Service]
@@ -253,14 +303,32 @@ journalctl -u rover.service -f
 
 ```text
 Rover/
-├── app.py                      # Main Flask web server, Picamera2 stream, and motor API
-├── requirements.txt            # Python dependencies (Flask, gpiozero, ultralytics, etc.)
-├── README.md                   # Setup guide and quick start documentation (this file)
-├── PROJECT_CONTEXT.md          # Comprehensive architectural and project vision context
+├── app.py                      # Main control server, Picamera2 stream, motor API & GCS host
+├── requirements.txt            # Python dependencies (Flask, gpiozero, ultralytics, ToF driver)
+├── README.md                   # Setup guide and user documentation (this file)
+├── PRD.md                      # Comprehensive Product Requirements Document & Architecture
+├── PROJECT_CONTEXT.md          # Architectural history, hardware design notes, and philosophy
 │
-├── vision/                     # Asynchronous YOLO object detection engine
-│   ├── __init__.py             # Vision package init
-│   └── detector.py             # Optimized zero-latency YOLODetector worker
+├── static/                     # Lightweight, zero-build Ground Control Station (GCS)
+│   ├── index.html              # 5-tab responsive HTML5 dashboard
+│   ├── css/
+│   │   └── dashboard.css       # Modern cyberpunk glassmorphic CSS3 design system
+│   └── js/
+│       ├── app.js              # Master GCS controller & tab manager
+│       ├── teleop.js           # Touch pointer capture & keyboard (WASD) teleoperation
+│       ├── websocket.js        # Real-time WebSocket & REST telemetry client
+│       ├── canvas_hud.js       # Tactical canvas bounding-box & touch-to-lock engine
+│       └── audio_alerts.js     # Web Audio API procedural warning synthesizer
+│
+├── vision/                     # YOLO AI perception & multi-object tracking engine
+│   ├── __init__.py             # Vision package exports
+│   ├── detector.py             # Asynchronous YOLODetector worker with ByteTrack & distance estimation
+│   ├── export.py               # Model optimization CLI (PyTorch -> NCNN / ONNX on Pi 5)
+│   └── test_detector.py        # 6-stage test & validation suite
+│
+├── sensors/                    # Hardware sensor drivers
+│   ├── __init__.py             # Sensors package exports
+│   └── distance.py             # VL53L0X ToF laser distance sensor driver with safety cutoff
 │
 └── circuits/                   # Complete electrical and wiring schematics
     ├── README.md               # Electrical documentation overview & architecture
@@ -275,18 +343,23 @@ Rover/
 ## Troubleshooting
 
 ### Motors don't move or only click
-1. **Check Common Ground:** Ensure the 12V battery negative terminal is connected directly to a Raspberry Pi ground pin (Pin 6 or 14).
-2. **Check Enable Pins:** Verify that `R_EN` and `L_EN` on both IBT-2 drivers are connected to 5V (Pins 2 and 4).
-3. **Check Fuse:** Ensure the 12V motor battery inline fuse is intact.
+1. **Obstacle Interceptor Active:** If an object is closer than 30 cm to the front VL53L0X sensor, forward drive is automatically blocked by the safety controller. Check the distance readout on the GCS dashboard. Reverse and turns will still work.
+2. **Check Common Ground:** Ensure the 12V battery negative terminal is connected directly to a Raspberry Pi ground pin (Pin 6, 9, 14, or 20).
+3. **Check Enable Pins:** Verify that `R_EN` and `L_EN` on both IBT-2 drivers are connected to 5V (Pins 2 and 4).
+4. **Check Fuse:** Ensure the 12V motor battery inline fuse is intact.
 
 ### Motor turns in reverse
 If one side turns backward when driving forward:
-- Turn off motor power and swap the `M+` and `M-` wires on that specific motor or driver terminal.
+- Power down the motor battery and swap the `M+` and `M-` wires on that specific driver terminal.
 
 ### Camera initialization fails (`picamera2` error)
 - Ensure the ribbon cable is seated firmly with contacts facing the motherboard PCB.
-- Verify with `rpicam-hello --list-cameras`.
+- Verify camera detection with `rpicam-hello --list-cameras`.
 - Do not use `MJPEGEncoder(num_buffers=4)` on Raspberry Pi 5. The codebase uses `MJPEGEncoder()`.
+
+### Distance sensor not detected
+- Check I2C detection with `i2cdetect -y 1`. Address `0x29` must be present.
+- Verify wiring: Pin 1 (3.3V), Pin 3 (SDA), Pin 5 (SCL), Pin 9 (GND).
 
 ### "No space left on device" during pip install
 By default, pip on ARM64 may attempt to download massive NVIDIA CUDA packages (>3 GB) that are unnecessary on Raspberry Pi.
@@ -300,7 +373,7 @@ By default, pip on ARM64 may attempt to download massive NVIDIA CUDA packages (>
    sudo raspi-config
    # Advanced Options -> Expand Filesystem -> Finish -> Reboot
    ```
-3. Install the CPU-only PyTorch wheel:
+3. Install the CPU-only PyTorch wheel first:
    ```bash
    pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
    pip install -r requirements.txt

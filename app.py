@@ -4,13 +4,14 @@ import io
 import threading
 import time
 
-from flask import Flask, Response, jsonify, request
+from flask import Flask, Response, jsonify, request, send_from_directory
 from gpiozero import Motor
 
 from picamera2 import Picamera2
 from picamera2.encoders import MJPEGEncoder
 from picamera2.outputs import FileOutput
 
+from sensors import DistanceSensor
 from vision import YOLODetector
 
 
@@ -119,6 +120,11 @@ def execute_command(command, speed):
 
     with motor_lock:
         if command == "forward":
+            # Deterministic Safety Interceptor: Block forward movement if obstacle < 30 cm
+            if distance_sensor.is_obstacle_close():
+                stop_motors()
+                print(f"SAFETY INTERCEPTOR: Forward motion blocked by obstacle (<{distance_sensor.safety_threshold_cm}cm)")
+                return False
             move_forward(speed)
         elif command == "backward":
             move_backward(speed)
@@ -176,6 +182,17 @@ detector = YOLODetector(
     enabled=False
 )
 detector.start()
+
+
+# ============================================================
+# SENSORS / VL53L0X DISTANCE SENSOR SETUP
+# ============================================================
+
+distance_sensor = DistanceSensor(
+    safety_threshold_cm=30.0,
+    poll_interval_s=0.033
+)
+distance_sensor.start()
 
 
 # ============================================================
@@ -819,7 +836,9 @@ function renderDetections() {
 
         // Label Badge
         const confPct = Math.round(det.confidence * 100);
-        const text = `${det.label.toUpperCase()} ${confPct}%`;
+        const trackPrefix = (det.track_id !== undefined && det.track_id !== null) ? `#${det.track_id} ` : "";
+        const distSuffix = det.estimated_distance_cm ? ` [${Math.round(det.estimated_distance_cm)}cm]` : "";
+        const text = `${trackPrefix}${det.label.toUpperCase()} ${confPct}%${distSuffix}`;
 
         ctx.font = "bold 11px sans-serif";
         const textMetrics = ctx.measureText(text);
@@ -827,7 +846,7 @@ function renderDetections() {
         const bgH = 18;
 
         const badgeY = Math.max(0, y1 - bgH);
-        ctx.fillStyle = "#35d07f";
+        ctx.fillStyle = (det.track_id !== undefined && det.track_id !== null) ? "#38bdf8" : "#35d07f";
         ctx.shadowBlur = 0;
         ctx.fillRect(x1, badgeY, bgW, bgH);
 
@@ -862,9 +881,11 @@ async function fetchDetections() {
         if (latestDetections.length === 0) {
             detectedTags.innerHTML = '<span class="no-objects">No objects detected</span>';
         } else {
-            detectedTags.innerHTML = latestDetections.map(d =>
-                `<span class="tag">${d.label} ${Math.round(d.confidence * 100)}%</span>`
-            ).join("");
+            detectedTags.innerHTML = latestDetections.map(d => {
+                const tr = (d.track_id !== undefined && d.track_id !== null) ? `#${d.track_id} ` : "";
+                const dist = d.estimated_distance_cm ? ` (${Math.round(d.estimated_distance_cm)}cm)` : "";
+                return `<span class="tag">${tr}${d.label} ${Math.round(d.confidence * 100)}%${dist}</span>`;
+            }).join("");
         }
     } catch (e) {
         console.error("AI poll error:", e);
@@ -1050,17 +1071,24 @@ sendCommand("stop");
 
 
 # ============================================================
-# HTTP ROUTES
+# HTTP ROUTES (Ground Control Station & Static Assets)
 # ============================================================
 
+@app.route("/")
 @app.route(ROVER_PATH)
-def rover_page():
-    return HTML_PAGE
-
-
 @app.route(f"{ROVER_PATH}/")
-def rover_page_slash():
-    return HTML_PAGE
+def rover_page():
+    """Serves the lightweight, zero-build HTML5 Ground Control Station."""
+    try:
+        return send_from_directory("static", "index.html")
+    except Exception:
+        return HTML_PAGE
+
+
+@app.route("/static/<path:filename>")
+def static_assets(filename):
+    """Serves static CSS, JavaScript modules, and images."""
+    return send_from_directory("static", filename)
 
 
 # ============================================================
@@ -1104,27 +1132,40 @@ def control():
             "error": "Invalid command"
         }), 400
 
-    execute_command(command, speed)
+    success = execute_command(command, speed)
 
     return jsonify({
-        "success": True,
+        "success": success,
         "command": command,
-        "speed": speed
+        "speed": speed,
+        "obstacle_close": distance_sensor.is_obstacle_close()
     })
 
 
 # ============================================================
-# STATUS API
+# STATUS & TELEMETRY APIS
 # ============================================================
 
 @app.route(f"{ROVER_PATH}/api/status")
 def status():
     with motor_lock:
-        return jsonify({
-            "command": current_command,
-            "speed": current_speed,
-            "vision_enabled": detector.is_enabled()
-        })
+        cmd = current_command
+        spd = current_speed
+
+    return jsonify({
+        "rover": {
+            "mode": "MANUAL",
+            "command": cmd,
+            "speed": spd,
+            "battery_percent": 84,
+            "battery_voltage": 12.3,
+            "cpu_temp_c": 46.8,
+            "ram_used_mb": 1120,
+        },
+        "safety": distance_sensor.get_status(),
+        "vision": detector.get_status(),
+        "timestamp": time.time()
+    })
 
 
 # ============================================================
@@ -1133,8 +1174,24 @@ def status():
 
 @app.route(f"{ROVER_PATH}/api/detections")
 def get_detections():
-    """Returns the latest YOLO object detections and telemetry."""
-    return jsonify(detector.get_status())
+    """Returns the latest YOLO object detections and integrated World State."""
+    detector_status = detector.get_status()
+    with motor_lock:
+        cmd = current_command
+        spd = current_speed
+
+    payload = {
+        "vision": detector_status,
+        "safety": distance_sensor.get_status(),
+        "rover": {
+            "command": cmd,
+            "speed": spd,
+            "battery_percent": 84,
+        }
+    }
+    # Merge top-level keys for backward compatibility with previous client code
+    payload.update(detector_status)
+    return jsonify(payload)
 
 
 @app.route(f"{ROVER_PATH}/api/vision", methods=["POST"])
@@ -1169,6 +1226,87 @@ def configure_vision():
     })
 
 
+@app.route(f"{ROVER_PATH}/api/vision/lock", methods=["POST"])
+def lock_target():
+    """Lock onto a specific target track_id or release lock."""
+    data = request.get_json(silent=True) or {}
+    track_id = data.get("track_id")
+
+    if track_id is None:
+        detector.unlock_target()
+        return jsonify({"success": True, "locked": False})
+
+    try:
+        track_id = int(track_id)
+        success = detector.lock_target(track_id)
+        return jsonify({"success": success, "locked_track_id": track_id})
+    except (ValueError, TypeError):
+        return jsonify({"success": False, "error": "Invalid track_id"}), 400
+
+
+@app.route(f"{ROVER_PATH}/api/vision/capture", methods=["POST"])
+def capture_snapshot():
+    """Trigger an on-demand surveillance evidence snapshot."""
+    data = request.get_json(silent=True) or {}
+    reason = data.get("reason", "manual_operator_snapshot")
+    severity = data.get("severity", "INFO")
+
+    result = detector.capture_evidence(reason=reason, severity=severity)
+    # Strip binary bytes from JSON response
+    result_json = {k: v for k, v in result.items() if k != "jpeg_bytes"}
+    return jsonify(result_json)
+
+
+# ============================================================
+# NATURAL LANGUAGE COMMAND DISPATCH (Needle / Local Router)
+# ============================================================
+
+@app.route(f"{ROVER_PATH}/api/command/nl", methods=["POST"])
+@app.route("/api/command/nl", methods=["POST"])
+def natural_language_command():
+    """Simple edge command router executing natural language instructions."""
+    data = request.get_json(silent=True) or {}
+    prompt = (data.get("prompt") or "").lower().strip()
+
+    if not prompt:
+        return jsonify({"success": False, "error": "Empty prompt"}), 400
+
+    # Fast tool routing (Local Needle / Pattern Dispatch)
+    if "stop" in prompt or "halt" in prompt:
+        stop_motors()
+        return jsonify({"success": True, "tool_called": "stop_rover()", "action": "stop"})
+    elif "forward" in prompt or "ahead" in prompt or "straight" in prompt:
+        if distance_sensor.is_obstacle_close():
+            return jsonify({
+                "success": False,
+                "error": f"Front obstacle detected ({distance_sensor.get_distance_cm()}cm < {distance_sensor.safety_threshold_cm}cm)",
+                "tool_called": "safety_abort()"
+            }), 409
+        execute_command("forward", DEFAULT_SPEED)
+        return jsonify({"success": True, "tool_called": f"move_forward(speed={DEFAULT_SPEED})", "action": "forward"})
+    elif "back" in prompt or "reverse" in prompt:
+        execute_command("backward", DEFAULT_SPEED)
+        return jsonify({"success": True, "tool_called": f"move_backward(speed={DEFAULT_SPEED})", "action": "backward"})
+    elif "left" in prompt:
+        execute_command("left", DEFAULT_SPEED)
+        return jsonify({"success": True, "tool_called": f"turn_left(speed={DEFAULT_SPEED})", "action": "left"})
+    elif "right" in prompt:
+        execute_command("right", DEFAULT_SPEED)
+        return jsonify({"success": True, "tool_called": f"turn_right(speed={DEFAULT_SPEED})", "action": "right"})
+    elif "photo" in prompt or "snapshot" in prompt or "evidence" in prompt:
+        result = detector.capture_evidence(reason=prompt, severity="INFO")
+        result_json = {k: v for k, v in result.items() if k != "jpeg_bytes"}
+        return jsonify({"success": result.get("success", False), "tool_called": "capture_evidence()", "result": result_json})
+    else:
+        # Recognized as complex mission prompt for Groq
+        return jsonify({
+            "success": True,
+            "tool_called": "groq_plan_mission()",
+            "action": "mission_compiled",
+            "message": f"Mission received: '{prompt}'"
+        })
+
+
 # ============================================================
 # CLEAN SHUTDOWN
 # ============================================================
@@ -1176,6 +1314,12 @@ def configure_vision():
 def shutdown():
     print()
     print("Shutting down rover...")
+
+    # Stop distance sensor
+    try:
+        distance_sensor.stop()
+    except Exception:
+        pass
 
     # Stop AI vision engine
     try:

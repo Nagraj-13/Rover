@@ -25,6 +25,9 @@ torchvision>=0.17.0
 # Computer Vision & Real-time YOLO Object Detection
 ultralytics>=8.1.0
 
+# VL53L0X Time-of-Flight Laser Distance Sensor (I2C)
+adafruit-circuitpython-vl53l0x>=3.7.0
+
 # Note on OpenCV & Picamera2:
 # On Raspberry Pi OS, use system packages with --system-site-packages venv:
 #   sudo apt install -y python3-picamera2 python3-opencv python3-gpiozero python3-lgpio

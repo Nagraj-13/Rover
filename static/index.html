@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="description" content="EdgeRover Ground Control Station — Lightweight, low-latency teleoperation and AI vision dashboard for Raspberry Pi 5.">
+    <title>EdgeRover — Ground Control Station</title>
+
+    <!-- Cyberpunk Glassmorphic Design System -->
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+
+<div class="app-container">
+
+    <!-- ======================================================================
+         TOP HEADER & STATUS BAR
+         ====================================================================== -->
+    <header class="gcs-header">
+        <div class="brand-section">
+            <span class="brand-logo">🛰️</span>
+            <div>
+                <h1 class="brand-title">EDGEROVER GCS</h1>
+            </div>
+            <span class="brand-tag">Pi 5 Edge AI</span>
+        </div>
+
+        <div class="header-telemetry-bar">
+            <div class="status-pill" id="connectionPill">
+                <span class="status-dot" id="connectionDot"></span>
+                <span id="connectionStatusText">CONNECTING...</span>
+            </div>
+
+            <span class="mode-badge" id="roverModeBadge">MODE: MANUAL</span>
+
+            <button class="header-action-btn active" id="audioToggleBtn" title="Toggle Proximity Audio Feedback">
+                🔊 Audio ON
+            </button>
+        </div>
+    </header>
+
+    <!-- ======================================================================
+         NAVIGATION TABS
+         ====================================================================== -->
+    <nav class="tab-nav" role="tablist">
+        <button class="tab-btn active" data-tab="tab-teleop" role="tab">
+            📹 Live Teleop & HUD
+        </button>
+        <button class="tab-btn" data-tab="tab-missions" role="tab">
+            📋 Missions & AI
+        </button>
+        <button class="tab-btn" data-tab="tab-events" role="tab">
+            🚨 Event Log & Evidence
+        </button>
+        <button class="tab-btn" data-tab="tab-diagnostics" role="tab">
+            📊 Sensors & Diagnostics
+        </button>
+        <button class="tab-btn" data-tab="tab-settings" role="tab">
+            ⚙️ Settings
+        </button>
+    </nav>
+
+    <!-- ======================================================================
+         TAB 1: LIVE TELEOPERATION & TACTICAL HUD
+         ====================================================================== -->
+    <main id="tab-teleop" class="tab-content active">
+        <div class="teleop-grid">
+            
+            <!-- VIDEO & HUD CANVAS -->
+            <div class="video-card">
+                <div class="video-wrapper">
+                    <!-- Live Camera Feed (Picamera2 MJPEG Stream) -->
+                    <img id="cameraFeed" class="camera-feed" src="/rover/stream.mjpg" alt="EdgeRover Live Camera Stream">
+                    
+                    <!-- Hardware-Accelerated Tactical Canvas HUD -->
+                    <canvas id="hudCanvas" class="hud-canvas"></canvas>
+
+                    <!-- Top HUD Indicators -->
+                    <div class="hud-overlay-top">
+                        <div class="hud-pill live-tag">LIVE 720p</div>
+                        <div class="hud-pill target-lock" id="hudTargetLockPill">TARGET LOCKED</div>
+                    </div>
+
+                    <!-- Critical Proximity Alert Banner -->
+                    <div id="proximityBanner" class="proximity-banner">
+                        ⚠️ OBSTACLE CRITICAL: 24 CM
+                    </div>
+                </div>
+
+                <!-- Video Controls & Metadata Bar -->
+                <div class="video-footer">
+                    <div class="stream-stats">
+                        <span>FPS: <b id="metricFps">-- FPS</b></span>
+                        <span>Detections: <b id="metricObjects">0</b></span>
+                    </div>
+                    <div class="video-action-group">
+                        <button class="icon-btn" id="captureEvidenceBtn">
+                            📷 Snap Evidence
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CONTROL SIDEBAR -->
+            <div class="control-sidebar">
+
+                <!-- Natural Language Command Bar -->
+                <div class="card">
+                    <div class="card-title">
+                        <span>Natural Language Dispatch</span>
+                        <span style="font-size: 11px; color: var(--accent-cyan);">Needle / Groq</span>
+                    </div>
+                    <div class="nl-command-box">
+                        <input type="text" id="nlCommandInput" class="nl-input" placeholder="e.g. Move forward 2s, turn left..." autocomplete="off">
+                        <button id="nlSubmitBtn" class="nl-send-btn">▶</button>
+                    </div>
+                </div>
+
+                <!-- Telemetry Metrics Grid -->
+                <div class="card">
+                    <div class="card-title">Real-Time Telemetry</div>
+                    <div class="metric-grid">
+                        <div class="metric-box">
+                            <span class="metric-label">Front Distance</span>
+                            <span class="metric-value highlight-emerald" id="metricDistance">-- cm</span>
+                        </div>
+                        <div class="metric-box">
+                            <span class="metric-label">Battery Level</span>
+                            <span class="metric-value highlight-cyan" id="metricBattery">--%</span>
+                        </div>
+                    </div>
+
+                    <!-- Speed Throttle Slider -->
+                    <div class="slider-group">
+                        <div class="slider-header">
+                            <span>Motor Throttle</span>
+                            <span id="speedValueReadout" style="color: var(--accent-cyan);">35%</span>
+                        </div>
+                        <input type="range" id="speedSlider" class="speed-slider" min="15" max="100" value="35">
+                    </div>
+                </div>
+
+                <!-- D-Pad Directional Controls -->
+                <div class="card">
+                    <div class="card-title">Directional Controls</div>
+                    <div class="dpad-container">
+                        <button class="control-btn btn-forward" data-command="forward" aria-label="Forward">
+                            ▲ <span class="key-hint">W</span>
+                        </button>
+                        <button class="control-btn btn-left" data-command="left" aria-label="Turn Left">
+                            ◀ <span class="key-hint">A</span>
+                        </button>
+                        <button class="control-btn btn-stop" data-command="stop" aria-label="Stop">
+                            ■ <span class="key-hint">STOP</span>
+                        </button>
+                        <button class="control-btn btn-right" data-command="right" aria-label="Turn Right">
+                            ▶ <span class="key-hint">D</span>
+                        </button>
+                        <button class="control-btn btn-backward" data-command="backward" aria-label="Backward">
+                            ▼ <span class="key-hint">S</span>
+                        </button>
+                    </div>
+
+                    <!-- Master Emergency Stop -->
+                    <button class="btn-estop" id="eStopBtn">
+                        🛑 EMERGENCY MOTOR STOP (SPACE)
+                    </button>
+                </div>
+
+            </div>
+
+        </div>
+    </main>
+
+    <!-- ======================================================================
+         TAB 2: MISSIONS & AUTONOMY
+         ====================================================================== -->
+    <section id="tab-missions" class="tab-content">
+        <div class="mission-panel-grid">
+            <div class="card">
+                <div class="card-title">Strategic Mission Prompt</div>
+                <textarea id="missionPromptArea" class="prompt-textarea" placeholder="Describe the mission in natural language... (e.g. Inspect the north parking lot for 15 minutes, notify me immediately if a person is detected, and return to base)."></textarea>
+                
+                <div class="preset-chip-group">
+                    <button class="chip-btn" data-prompt="Patrol warehouse perimeter. Alert if any person detected. Return to base after 10 minutes.">
+                        🏢 Warehouse Patrol
+                    </button>
+                    <button class="chip-btn" data-prompt="Scan room 360 degrees. Report all detected objects and battery status.">
+                        🔄 360° Room Audit
+                    </button>
+                    <button class="chip-btn" data-prompt="Move forward slowly, maintain 80cm distance from target, and capture evidence photos.">
+                        🎯 Target Proximity Audit
+                    </button>
+                </div>
+
+                <button class="icon-btn" style="background: var(--accent-cyan); color: #000; justify-content: center; padding: 12px;">
+                    ✨ Compile & Launch Mission via Groq
+                </button>
+            </div>
+
+            <div class="card">
+                <div class="card-title">Active Mission Status</div>
+                <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 8px;">No autonomous mission currently executing. Standby mode active.</div>
+                <div class="mission-step-list">
+                    <div class="mission-step-item">
+                        <span class="step-status-icon pending">1</span>
+                        <span>Pre-flight sensor & battery audit</span>
+                    </div>
+                    <div class="mission-step-item">
+                        <span class="step-status-icon pending">2</span>
+                        <span>Navigate to Waypoint Alpha (Perimeter East)</span>
+                    </div>
+                    <div class="mission-step-item">
+                        <span class="step-status-icon pending">3</span>
+                        <span>Conduct 180° visual sweep for unauthorized personnel</span>
+                    </div>
+                    <div class="mission-step-item">
+                        <span class="step-status-icon pending">4</span>
+                        <span>Compile final summary debrief and return to dock</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ======================================================================
+         TAB 3: EVENT LOG & SURVEILLANCE EVIDENCE
+         ====================================================================== -->
+    <section id="tab-events" class="tab-content">
+        <div class="card">
+            <div class="card-title">
+                <span>Surveillance Event Stream</span>
+                <span style="font-size: 12px; color: var(--text-secondary);">Real-Time SQLite Log</span>
+            </div>
+            
+            <div id="eventListContainer" class="events-container">
+                <div class="event-card severity-info">
+                    <div class="event-info">
+                        <span class="event-title">System Initialized</span>
+                        <div class="event-meta">
+                            <span>⏱️ Boot Sequence</span>
+                            <span>📌 Dual IBT-2 & Picamera2 online</span>
+                        </div>
+                    </div>
+                    <span class="hud-pill">INFO</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ======================================================================
+         TAB 4: SENSORS & SYSTEM DIAGNOSTICS
+         ====================================================================== -->
+    <section id="tab-diagnostics" class="tab-content">
+        <div class="diagnostics-grid">
+            <div class="card">
+                <div class="card-title">VL53L0X ToF Laser Distance</div>
+                <div style="display: flex; justify-content: space-between; align-items: baseline;">
+                    <span class="metric-value highlight-cyan" id="diagDist">-- cm</span>
+                    <span style="font-size: 12px; color: var(--text-muted);">Cutoff: 30 cm</span>
+                </div>
+                <div class="sensor-gauge-bar">
+                    <div id="diagDistBar" class="sensor-gauge-fill" style="width: 60%;"></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-title">Raspberry Pi 5 CPU Thermals</div>
+                <div class="metric-value highlight-emerald" id="diagCpuTemp">46.8°C</div>
+                <span style="font-size: 12px; color: var(--text-secondary);">Thermal Throttling: INACTIVE</span>
+            </div>
+
+            <div class="card">
+                <div class="card-title">RAM Utilization</div>
+                <div class="metric-value highlight-cyan" id="diagRam">1120 MB</div>
+                <span style="font-size: 12px; color: var(--text-secondary);">Available: 4.0 GB LPDDR4X</span>
+            </div>
+
+            <div class="card">
+                <div class="card-title">12V Drive Battery</div>
+                <div class="metric-value highlight-emerald" id="diagBattPct">84%</div>
+                <span style="font-size: 12px; color: var(--text-secondary);">Estimated Voltage: 12.3 V (3S Li-ion)</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- ======================================================================
+         TAB 5: SETTINGS & CONFIGURATION
+         ====================================================================== -->
+    <section id="tab-settings" class="tab-content">
+        <div class="settings-grid">
+            <div class="card">
+                <div class="card-title">Edge AI Vision Engine</div>
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <span class="setting-name">Real-Time YOLO Object Detection</span>
+                        <span class="setting-desc">Runs inference on Pi 5 CPU background worker</span>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="settingYoloToggle" checked>
+                        <span class="slider-switch"></span>
+                    </label>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <span class="setting-name">Confidence Threshold</span>
+                        <span class="setting-desc">Minimum score required to trigger detections</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="range" id="settingConfSlider" min="10" max="90" value="35" style="width: 100px;">
+                        <span id="settingConfReadout" style="font-size: 12px; font-weight: 700;">35%</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-title">External Integration Keys</div>
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <span class="setting-name">Groq API Key</span>
+                        <span class="setting-desc">Required for cloud mission planning & debriefs</span>
+                    </div>
+                    <input type="password" placeholder="gsk_..." class="nl-input" style="width: 140px;">
+                </div>
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <span class="setting-name">Telegram Bot Token</span>
+                        <span class="setting-desc">For perimeter alert photo dispatches</span>
+                    </div>
+                    <input type="password" placeholder="bot_token..." class="nl-input" style="width: 140px;">
+                </div>
+            </div>
+        </div>
+    </section>
+
+</div>
+
+<!-- Floating Toast Notification Container -->
+<div id="toastContainer" class="toast-container"></div>
+
+<!-- ==========================================================================
+     CLIENT SCRIPTS (Vanilla ES6+ • Zero Build Overhead)
+     ========================================================================== -->
+<script src="/static/js/audio_alerts.js"></script>
+<script src="/static/js/websocket.js"></script>
+<script src="/static/js/canvas_hud.js"></script>
+<script src="/static/js/teleop.js"></script>
+<script src="/static/js/app.js"></script>
+
+</body>
+</html>
