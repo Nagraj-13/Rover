@@ -1,18 +1,75 @@
 #!/usr/bin/env python3
 
 import io
+import logging
+import os
 import threading
 import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory
-from gpiozero import Motor
 
-from picamera2 import Picamera2
-from picamera2.encoders import MJPEGEncoder
-from picamera2.outputs import FileOutput
+# Hardware Drivers with Graceful Fallback for Laptops
+try:
+    from gpiozero import Motor
+    GPIOZERO_AVAILABLE = True
+except (ImportError, Exception):
+    GPIOZERO_AVAILABLE = False
+    class MockMotor:
+        def __init__(self, forward=None, backward=None, pwm=True):
+            self.forward_pin = forward
+            self.backward_pin = backward
+            self.speed = 0.0
+            self.is_active = False
+        def forward(self, speed=1.0):
+            self.speed = speed
+            self.is_active = True
+        def backward(self, speed=1.0):
+            self.speed = -speed
+            self.is_active = True
+        def stop(self):
+            self.speed = 0.0
+            self.is_active = False
+        def close(self):
+            self.stop()
+    Motor = MockMotor
+
+try:
+    from picamera2 import Picamera2
+    from picamera2.encoders import MJPEGEncoder
+    from picamera2.outputs import FileOutput
+    PICAMERA2_AVAILABLE = True
+except (ImportError, Exception):
+    PICAMERA2_AVAILABLE = False
+    class MockPicamera2:
+        def __init__(self):
+            self._recording = False
+        def create_video_configuration(self, **kwargs):
+            return {}
+        def configure(self, config):
+            pass
+        def start_recording(self, encoder, output):
+            self._recording = True
+        def stop_recording(self):
+            self._recording = False
+    Picamera2 = MockPicamera2
+    def MJPEGEncoder():
+        return None
+    def FileOutput(output):
+        return None
 
 from sensors import DistanceSensor
 from vision import YOLODetector
+
+# 4-Tier Hybrid Intelligence Stack (PRD Section 4)
+from intelligence import (
+    tool_registry,
+    needle_router,
+    laya_engine,
+    groq_brain,
+    WorldState,
+    EventSeverity,
+    RecommendedAction,
+)
 
 
 # ============================================================
@@ -217,30 +274,91 @@ class StreamingOutput(io.BufferedIOBase):
             self.vision_detector.update_frame(buf)
 
 
-# Create camera
-picam2 = Picamera2()
-
-# Camera configuration
-camera_config = picam2.create_video_configuration(
-    main={
-        "size": (
-            CAMERA_WIDTH,
-            CAMERA_HEIGHT
-        )
-    }
-)
-picam2.configure(camera_config)
-
 # Shared stream buffer with detector hook
 output = StreamingOutput(vision_detector=detector)
 
-# IMPORTANT: Do NOT use num_buffers here for Raspberry Pi 5 environment
-encoder = MJPEGEncoder()
+# Create camera with graceful simulation fallback for development laptops
+camera_active = False
+if PICAMERA2_AVAILABLE:
+    try:
+        picam2 = Picamera2()
+        camera_config = picam2.create_video_configuration(
+            main={"size": (CAMERA_WIDTH, CAMERA_HEIGHT)}
+        )
+        picam2.configure(camera_config)
+        encoder = MJPEGEncoder()
+        picam2.start_recording(encoder, FileOutput(output))
+        camera_active = True
+        print("Camera: Picamera2 started recording (1280x720).")
+    except Exception as e:
+        print(f"Picamera2 init exception: {e}. Running in simulation mode.")
+        picam2 = MockPicamera2()
+else:
+    picam2 = MockPicamera2()
 
-# Start camera recording
-picam2.start_recording(
-    encoder,
-    FileOutput(output)
+if not camera_active:
+    # Background simulated MJPEG stream for development laptops
+    def _laptop_simulation_feed():
+        try:
+            import cv2
+            import numpy as np
+            has_cv = True
+        except ImportError:
+            has_cv = False
+
+        while True:
+            time.sleep(0.066)  # ~15 FPS
+            if has_cv:
+                img = np.zeros((360, 640, 3), dtype=np.uint8)
+                img[:] = (24, 28, 32)
+                cv2.putText(img, "EDGEROVER SIMULATION STREAM", (25, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 240, 255), 2)
+                cv2.putText(img, f"Range: {distance_sensor.get_distance_cm():.1f} cm | Batt: 84%", (25, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (100, 255, 150), 1)
+                cv2.putText(img, f"Motor: {current_command.upper()} | Speed: {int(current_speed*100)}%", (25, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (220, 220, 220), 1)
+                cv2.putText(img, "Groq (Tier 1) | Needle 2 (Tier 2) | Laya (Tier 3)", (25, 335), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 150, 150), 1)
+                _, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                output.write(buf.tobytes())
+            else:
+                jpeg_1x1 = b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00H\x00H\x00\x00\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\t\x08\n\x0c\x14\r\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c $.\' ",#\x1c\x1c(7),01444\x1f\'9=82<.342\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\xff\xda\x00\x08\x01\x01\x00\x00?\x00\xbf\x00\xff\xd9'
+                output.write(jpeg_1x1)
+
+    sim_thread = threading.Thread(target=_laptop_simulation_feed, daemon=True)
+    sim_thread.start()
+
+
+# Helper: Build real-time WorldState blackboard for Laya and Groq
+def build_current_world_state() -> WorldState:
+    dist = distance_sensor.get_distance_cm()
+    det_status = detector.get_status()
+    latest_detections = det_status.get("latest_detections", [])
+    return WorldState(
+        distance_cm=dist,
+        detections=latest_detections,
+        battery_pct=84.0,
+        current_speed=current_speed,
+        rover_state=current_command.upper(),
+    )
+
+
+# Helper: Motion execution for Needle tool bindings
+def execute_motion_tool(cmd: str, speed: float, duration_seconds: float = 1.0):
+    success = execute_command(cmd, speed)
+    if duration_seconds > 0 and success:
+        def delayed_stop():
+            time.sleep(duration_seconds)
+            stop_motors()
+        threading.Thread(target=delayed_stop, daemon=True).start()
+    return {"status": "executed", "command": cmd, "speed": speed, "duration": duration_seconds, "success": success}
+
+
+# Bind Rover Hardware into strictly typed Tool Registry
+tool_registry.bind_rover_hardware(
+    move_forward_fn=lambda speed=0.35, duration_seconds=1.0: execute_motion_tool("forward", speed, duration_seconds),
+    move_backward_fn=lambda speed=0.30, duration_seconds=1.0: execute_motion_tool("backward", speed, duration_seconds),
+    turn_left_fn=lambda speed=0.35, degrees=90.0, duration_seconds=0.6: execute_motion_tool("left", speed, duration_seconds),
+    turn_right_fn=lambda speed=0.35, degrees=90.0, duration_seconds=0.6: execute_motion_tool("right", speed, duration_seconds),
+    stop_rover_fn=lambda: stop_motors(),
+    capture_evidence_fn=lambda reason="Surveillance event", severity="INFO": detector.capture_evidence(reason=reason, severity=severity),
+    get_telemetry_fn=lambda: build_current_world_state().to_dict(),
 )
 
 
@@ -1152,6 +1270,10 @@ def status():
         cmd = current_command
         spd = current_speed
 
+    world_state = build_current_world_state()
+    laya_triage = laya_engine.evaluate_triage(world_state)
+    laya_nav = laya_engine.evaluate_navigation(world_state)
+
     return jsonify({
         "rover": {
             "mode": "MANUAL",
@@ -1164,6 +1286,10 @@ def status():
         },
         "safety": distance_sensor.get_status(),
         "vision": detector.get_status(),
+        "laya": {
+            "triage": laya_triage.to_dict(),
+            "navigation": laya_nav.to_dict(),
+        },
         "timestamp": time.time()
     })
 
@@ -1180,6 +1306,10 @@ def get_detections():
         cmd = current_command
         spd = current_speed
 
+    world_state = build_current_world_state()
+    laya_triage = laya_engine.evaluate_triage(world_state)
+    laya_nav = laya_engine.evaluate_navigation(world_state)
+
     payload = {
         "vision": detector_status,
         "safety": distance_sensor.get_status(),
@@ -1187,6 +1317,10 @@ def get_detections():
             "command": cmd,
             "speed": spd,
             "battery_percent": 84,
+        },
+        "laya": {
+            "triage": laya_triage.to_dict(),
+            "navigation": laya_nav.to_dict(),
         }
     }
     # Merge top-level keys for backward compatibility with previous client code
@@ -1264,47 +1398,111 @@ def capture_snapshot():
 @app.route(f"{ROVER_PATH}/api/command/nl", methods=["POST"])
 @app.route("/api/command/nl", methods=["POST"])
 def natural_language_command():
-    """Simple edge command router executing natural language instructions."""
+    """Needle 2 Edge Tool Dispatcher & Gateway (Tier 2)."""
     data = request.get_json(silent=True) or {}
-    prompt = (data.get("prompt") or "").lower().strip()
+    prompt = (data.get("prompt") or "").strip()
 
     if not prompt:
         return jsonify({"success": False, "error": "Empty prompt"}), 400
 
-    # Fast tool routing (Local Needle / Pattern Dispatch)
-    if "stop" in prompt or "halt" in prompt:
-        stop_motors()
-        return jsonify({"success": True, "tool_called": "stop_rover()", "action": "stop"})
-    elif "forward" in prompt or "ahead" in prompt or "straight" in prompt:
-        if distance_sensor.is_obstacle_close():
-            return jsonify({
-                "success": False,
-                "error": f"Front obstacle detected ({distance_sensor.get_distance_cm()}cm < {distance_sensor.safety_threshold_cm}cm)",
-                "tool_called": "safety_abort()"
-            }), 409
-        execute_command("forward", DEFAULT_SPEED)
-        return jsonify({"success": True, "tool_called": f"move_forward(speed={DEFAULT_SPEED})", "action": "forward"})
-    elif "back" in prompt or "reverse" in prompt:
-        execute_command("backward", DEFAULT_SPEED)
-        return jsonify({"success": True, "tool_called": f"move_backward(speed={DEFAULT_SPEED})", "action": "backward"})
-    elif "left" in prompt:
-        execute_command("left", DEFAULT_SPEED)
-        return jsonify({"success": True, "tool_called": f"turn_left(speed={DEFAULT_SPEED})", "action": "left"})
-    elif "right" in prompt:
-        execute_command("right", DEFAULT_SPEED)
-        return jsonify({"success": True, "tool_called": f"turn_right(speed={DEFAULT_SPEED})", "action": "right"})
-    elif "photo" in prompt or "snapshot" in prompt or "evidence" in prompt:
-        result = detector.capture_evidence(reason=prompt, severity="INFO")
-        result_json = {k: v for k, v in result.items() if k != "jpeg_bytes"}
-        return jsonify({"success": result.get("success", False), "tool_called": "capture_evidence()", "result": result_json})
-    else:
-        # Recognized as complex mission prompt for Groq
+    # Dispatch command via Needle 2
+    dispatch_res = needle_router.dispatch(prompt, execute=True)
+
+    if dispatch_res.action == "escalate_to_groq":
+        # Complex multi-step strategic mission -> Route to Groq (Tier 1)
+        world_state = build_current_world_state()
+        mission = groq_brain.compile_mission(prompt, world_state.to_dict())
         return jsonify({
             "success": True,
-            "tool_called": "groq_plan_mission()",
+            "tier": "groq_cloud",
             "action": "mission_compiled",
-            "message": f"Mission received: '{prompt}'"
+            "mission": mission.to_dict(),
+            "message": f"Mission '{mission.title}' compiled via {mission.compiler_source} in {mission.compilation_latency_ms:.1f}ms."
         })
+
+    return jsonify(dispatch_res.to_dict())
+
+
+# ============================================================
+# STRATEGIC MISSION ENGINE (Tier 1 Groq)
+# ============================================================
+
+@app.route(f"{ROVER_PATH}/api/missions/create", methods=["POST"])
+@app.route("/api/missions/create", methods=["POST"])
+def create_mission():
+    """Compiles a natural language mission prompt into structured JSON via Groq."""
+    data = request.get_json(silent=True) or {}
+    prompt = (data.get("prompt") or "").strip()
+    if not prompt:
+        return jsonify({"success": False, "error": "Empty mission prompt"}), 400
+
+    world_state = build_current_world_state()
+    mission = groq_brain.compile_mission(prompt, world_state.to_dict())
+    return jsonify({"success": True, "mission": mission.to_dict()})
+
+
+@app.route(f"{ROVER_PATH}/api/missions/debrief", methods=["POST"])
+@app.route("/api/missions/debrief", methods=["POST"])
+def debrief_mission():
+    """Generates an executive mission debrief report using Groq."""
+    data = request.get_json(silent=True) or {}
+    mission = data.get("mission") or {}
+    events = data.get("events") or []
+    telemetry = data.get("telemetry") or {}
+
+    debrief = groq_brain.generate_mission_debrief(mission, events, telemetry)
+    return jsonify({"success": True, "debrief": debrief.to_dict()})
+
+
+# ============================================================
+# DECISION & TRIAGE ENGINE (Tier 3 Laya)
+# ============================================================
+
+@app.route(f"{ROVER_PATH}/api/decision/triage", methods=["GET", "POST"])
+@app.route("/api/decision/triage", methods=["GET", "POST"])
+def decision_triage():
+    """Runs Laya System-1 non-autoregressive triage over current World State."""
+    world_state = build_current_world_state()
+    triage = laya_engine.evaluate_triage(world_state)
+    nav = laya_engine.evaluate_navigation(world_state)
+    return jsonify({
+        "success": True,
+        "world_state": world_state.to_dict(),
+        "triage": triage.to_dict(),
+        "navigation": nav.to_dict(),
+    })
+
+
+# ============================================================
+# SETTINGS: GROQ API KEY
+# ============================================================
+
+@app.route(f"{ROVER_PATH}/api/settings/groq", methods=["GET", "POST"])
+@app.route("/api/settings/groq", methods=["GET", "POST"])
+def groq_settings():
+    """Retrieve status or dynamically update Groq Cloud API key and active model from Dashboard."""
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        api_key = data.get("api_key")
+        model = data.get("model")
+        save_to_env = bool(data.get("save_to_env", True))
+
+        saved_key = False
+        saved_model = False
+        if api_key is not None:
+            saved_key = groq_brain.set_api_key(str(api_key).strip(), persist_to_env=save_to_env)
+        if model is not None:
+            saved_model = groq_brain.set_model(str(model).strip(), persist_to_env=save_to_env)
+
+        status = groq_brain.get_status()
+        status["success"] = True
+        status["saved_to_env"] = saved_key or saved_model
+        return jsonify(status)
+
+    # GET request: return current status for client-side input layer and dropdown
+    status = groq_brain.get_status()
+    status["success"] = True
+    return jsonify(status)
 
 
 # ============================================================

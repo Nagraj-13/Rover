@@ -1007,3 +1007,60 @@ input:checked + .slider-switch:before {
     from { transform: translateX(100%); opacity: 0; }
     to { transform: translateX(0); opacity: 1; }
 }
+
+/* ==============================================================================
+   DYNAMIC GROQ API KEY BANNER & INPUT LAYER
+   ============================================================================== */
+
+.groq-api-banner {
+    background: var(--bg-card);
+    backdrop-filter: blur(16px);
+    border-radius: var(--radius-md);
+    padding: 14px 18px;
+    transition: var(--transition-normal);
+    box-shadow: var(--shadow-card);
+}
+
+.groq-api-banner.warning {
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    background: rgba(30, 24, 14, 0.85);
+}
+
+.groq-api-banner.connected {
+    border: 1px solid rgba(53, 208, 127, 0.4);
+    background: rgba(14, 30, 22, 0.85);
+}
+
+.groq-banner-content {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.groq-banner-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.groq-banner-icon {
+    font-size: 20px;
+    line-height: 1;
+}
+
+.groq-key-input-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding-top: 4px;
+}
+
+.groq-masked-badge {
+    background: rgba(255, 255, 255, 0.08);
+    padding: 3px 8px;
+    border-radius: var(--radius-sm);
+    font-family: monospace;
+    font-size: 11px;
+    color: var(--accent-cyan);
+}

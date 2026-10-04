@@ -253,7 +253,45 @@ The dashboard is a single-page application organized into **5 dedicated tabs**:
 ### Tab 5: Settings & Configuration
 - YOLO Object Detection toggle (enables/disables inference thread on the fly).
 - Confidence threshold slider (10% to 90%).
-- External API keys (Groq API, Telegram Bot Token).
+---
+
+## 4-Tier Hybrid Intelligence Stack (Groq, Needle 2, Laya)
+
+EdgeRover integrates four complementary intelligence layers to balance sub-millisecond local reflexes with strategic cloud reasoning:
+
+| Intelligence Layer | Engine / Framework | Latency | Role & Responsibility | Reference |
+| :--- | :--- | :--- | :--- | :--- |
+| **Tier 1: Cloud Reasoning** | **Groq Cloud API** (`llama-3.3-70b-versatile`) | ~300–600 ms | Strategic mission planning, ambiguity resolution, and post-mission executive debriefs. | [Groq API](https://groq.com) |
+| **Tier 2: Edge Tool Calling** | **Needle 2** (Cactus Compute 45M SLM) | ~5–25 ms | Sub-50ms natural language command parsing and direct tool dispatching without internet. | [cactus-compute/needle](https://github.com/cactus-compute/needle) |
+| **Tier 3: Decision Engine** | **Laya** (System-1 Decision Engine) | ~0.5–2 ms | Non-autoregressive typed decisions (`choice`, `score`, `noul`) over World State for instant hazard triage. | [NandhaKishorM/laya](https://github.com/NandhaKishorM/laya) |
+| **Tier 4: Visual Perception** | **Ultralytics YOLO** (`yolov8n.pt` / `yolo26n`) | ~40–70 ms | Real-time object detection, ByteTrack tracking, and monocular distance estimation. | [Ultralytics](https://github.com/ultralytics/ultralytics) |
+
+### Running the Multi-Tier Intelligence Demo on a Laptop
+
+You can run the full multi-tier intelligence stack directly on your development laptop without Raspberry Pi hardware:
+
+```bash
+# Optional: provide Groq Cloud API key (will use built-in strategic compiler if omitted)
+export GROQ_API_KEY="gsk_..."   # On Linux/macOS
+$env:GROQ_API_KEY="gsk_..."      # On Windows PowerShell
+
+# Run the complete demonstration
+python sample_intelligence_demo.py
+```
+
+The sample program demonstrates:
+1. **Needle 2 Tool Calling:** Dispatches atomic rover tools (`move_forward`, `turn_right`, `capture_evidence`) in <1ms and automatically detects complex missions to escalate to Groq.
+2. **Laya System-1 Triage:** Evaluates nominal cruising, caution zone obstacles, and security intruder breaches with typed choice, score, and noul answers.
+3. **Groq Strategic Brain:** Compiles high-level user missions into step-by-step execution graphs and synthesizes executive debrief summaries.
+4. **Integrated Mission Simulation:** Simulates an autonomous patrol mission coordinating all three layers in real time.
+5. **Academic Benchmarking:** Measures throughput (>60,000 ops/sec) and p99 latency percentiles.
+
+### Running the Web Ground Control Station on a Laptop
+
+```bash
+python app.py
+```
+Open `http://localhost:8080/rover` in your browser. All motor drivers, camera streams, and distance sensors automatically operate in high-fidelity simulation mode when running on a development PC.
 
 ---
 

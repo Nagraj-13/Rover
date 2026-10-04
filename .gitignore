@@ -14,4 +14,7 @@ env/
 *.pt
 *.onnx
 runs/
-.cache/
+# Environment variables & API keys
+.env
+.env.local
+.env.*.local

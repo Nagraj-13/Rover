@@ -246,6 +246,223 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    // 8. Groq Strategic Mission Compiler
+    const compileBtn = document.getElementById("compileMissionBtn");
+    const missionTextarea = document.getElementById("missionPromptArea");
+    const missionStepList = document.querySelector(".mission-step-list");
+
+    if (compileBtn && missionTextarea) {
+        compileBtn.addEventListener("click", async () => {
+            const prompt = missionTextarea.value.trim();
+            if (!prompt) {
+                showToast("Please enter a mission prompt first.");
+                return;
+            }
+
+            compileBtn.disabled = true;
+            compileBtn.textContent = "⏳ Compiling via Groq...";
+
+            try {
+                const res = await fetch("/rover/api/missions/create", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ prompt: prompt })
+                });
+                const data = await res.json();
+
+                if (data.success && data.mission) {
+                    const m = data.mission;
+                    showToast(`✨ Mission compiled: ${m.title}`);
+
+                    if (missionStepList && m.steps) {
+                        missionStepList.innerHTML = m.steps.map(s => `
+                            <div class="mission-step-item">
+                                <span class="step-status-icon pending">${s.step_number}</span>
+                                <div>
+                                    <div style="font-weight: 500;">${s.title}</div>
+                                    <div style="font-size: 11px; color: var(--accent-cyan); font-family: monospace;">${s.tool_name}(${JSON.stringify(s.parameters)})</div>
+                                </div>
+                            </div>
+                        `).join("");
+                    }
+                } else {
+                    showToast(`Compilation error: ${data.error || "Unknown error"}`);
+                }
+            } catch (err) {
+                console.error("Mission compilation error:", err);
+                showToast("Network error compiling mission.");
+            } finally {
+                compileBtn.disabled = false;
+                compileBtn.textContent = "✨ Compile & Launch Mission via Groq";
+            }
+        });
+    }
+
+    // 9. Groq Cloud Dynamic API Key & Input Layer Manager
+    const groqNotConfiguredBanner = document.getElementById("groqBannerNotConfigured");
+    const groqConfiguredBanner = document.getElementById("groqBannerConfigured");
+    const dynamicKeyInput = document.getElementById("dynamicGroqKeyInput");
+    const dynamicSaveEnv = document.getElementById("dynamicGroqSaveEnv");
+    const btnConnectDynamic = document.getElementById("btnConnectGroqDynamic");
+    const btnEditKey = document.getElementById("btnEditGroqKey");
+    const groqMaskedBadge = document.getElementById("groqMaskedKeyBadge");
+    const groqModelBadge = document.getElementById("groqModelBadge");
+
+    const settingsGroqKeyInput = document.getElementById("settingGroqKey");
+    const settingsGroqStatusPill = document.getElementById("settingsGroqStatusPill");
+    const btnSaveGroqSettings = document.getElementById("btnSaveGroqSettings");
+    const settingPersistEnv = document.getElementById("settingPersistEnv");
+
+    const missionModelSelect = document.getElementById("missionGroqModelSelect");
+    const settingsModelSelect = document.getElementById("settingsGroqModelSelect");
+
+    async function checkGroqStatus() {
+        try {
+            const res = await fetch("/rover/api/settings/groq");
+            const data = await res.json();
+            updateGroqUI(data);
+        } catch (e) {
+            console.warn("Could not check Groq status:", e);
+        }
+    }
+
+    function populateModelDropdown(selectEl, models, currentModel) {
+        if (!selectEl || !models || !models.length) return;
+        selectEl.innerHTML = models.map(m => `
+            <option value="${m.id}" ${m.id === currentModel ? "selected" : ""}>
+                ${m.name}
+            </option>
+        `).join("");
+    }
+
+    function updateGroqUI(data) {
+        const isConfigured = !!(data && data.configured && data.cloud_ready);
+        const currentModel = data.model || "openai/gpt-oss-120b";
+
+        if (data.available_models) {
+            populateModelDropdown(missionModelSelect, data.available_models, currentModel);
+            populateModelDropdown(settingsModelSelect, data.available_models, currentModel);
+        } else {
+            if (missionModelSelect) missionModelSelect.value = currentModel;
+            if (settingsModelSelect) settingsModelSelect.value = currentModel;
+        }
+
+        if (isConfigured) {
+            if (groqNotConfiguredBanner) groqNotConfiguredBanner.style.display = "none";
+            if (groqConfiguredBanner) groqConfiguredBanner.style.display = "block";
+            if (groqMaskedBadge) groqMaskedBadge.textContent = data.masked_key || "Active";
+            if (groqModelBadge) groqModelBadge.textContent = currentModel;
+            if (settingsGroqStatusPill) {
+                settingsGroqStatusPill.textContent = "ONLINE (LPU Active)";
+                settingsGroqStatusPill.className = "status-pill";
+                settingsGroqStatusPill.style.background = "rgba(53, 208, 127, 0.2)";
+                settingsGroqStatusPill.style.color = "var(--accent-emerald)";
+            }
+        } else {
+            if (groqNotConfiguredBanner) groqNotConfiguredBanner.style.display = "block";
+            if (groqConfiguredBanner) groqConfiguredBanner.style.display = "none";
+            if (settingsGroqStatusPill) {
+                settingsGroqStatusPill.textContent = "STANDALONE LOCAL";
+                settingsGroqStatusPill.className = "status-pill";
+                settingsGroqStatusPill.style.background = "rgba(245, 158, 11, 0.2)";
+                settingsGroqStatusPill.style.color = "var(--accent-amber)";
+            }
+        }
+    }
+
+    async function updateGroqKey(key, persistToEnv) {
+        if (!key) {
+            showToast("Please enter an API key.");
+            return;
+        }
+        try {
+            const res = await fetch("/rover/api/settings/groq", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ api_key: key, save_to_env: persistToEnv })
+            });
+            const data = await res.json();
+            updateGroqUI(data);
+            if (data.cloud_ready) {
+                showToast(`Groq Cloud Connected! (${data.saved_to_env ? "Saved to .env" : "Session only"})`);
+                if (dynamicKeyInput) dynamicKeyInput.value = "";
+                if (settingsGroqKeyInput) settingsGroqKeyInput.value = "";
+            } else {
+                showToast("Key saved, but format unverified.");
+            }
+        } catch (e) {
+            console.error("Error setting Groq key:", e);
+            showToast("Failed to connect Groq API key.");
+        }
+    }
+
+    async function switchGroqModel(modelId, persistToEnv = true) {
+        try {
+            const res = await fetch("/rover/api/settings/groq", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: modelId, save_to_env: persistToEnv })
+            });
+            const data = await res.json();
+            updateGroqUI(data);
+            showToast(`Active Groq Model: ${modelId}`);
+        } catch (e) {
+            console.error("Error switching Groq model:", e);
+            showToast("Failed to switch model.");
+        }
+    }
+
+    if (missionModelSelect) {
+        missionModelSelect.addEventListener("change", (e) => {
+            const newModel = e.target.value;
+            if (settingsModelSelect) settingsModelSelect.value = newModel;
+            switchGroqModel(newModel, true);
+        });
+    }
+
+    if (settingsModelSelect) {
+        settingsModelSelect.addEventListener("change", (e) => {
+            const newModel = e.target.value;
+            if (missionModelSelect) missionModelSelect.value = newModel;
+            const persist = settingPersistEnv ? settingPersistEnv.checked : true;
+            switchGroqModel(newModel, persist);
+        });
+    }
+
+    if (btnConnectDynamic && dynamicKeyInput) {
+        btnConnectDynamic.addEventListener("click", () => {
+            const key = dynamicKeyInput.value.trim();
+            const persist = dynamicSaveEnv ? dynamicSaveEnv.checked : true;
+            updateGroqKey(key, persist);
+        });
+        dynamicKeyInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                const key = dynamicKeyInput.value.trim();
+                const persist = dynamicSaveEnv ? dynamicSaveEnv.checked : true;
+                updateGroqKey(key, persist);
+            }
+        });
+    }
+
+    if (btnEditKey) {
+        btnEditKey.addEventListener("click", () => {
+            if (groqNotConfiguredBanner) groqNotConfiguredBanner.style.display = "block";
+            if (groqConfiguredBanner) groqConfiguredBanner.style.display = "none";
+            if (dynamicKeyInput) dynamicKeyInput.focus();
+        });
+    }
+
+    if (btnSaveGroqSettings && settingsGroqKeyInput) {
+        btnSaveGroqSettings.addEventListener("click", () => {
+            const key = settingsGroqKeyInput.value.trim();
+            const persist = settingPersistEnv ? settingPersistEnv.checked : true;
+            updateGroqKey(key, persist);
+        });
+    }
+
+    // Check status on dashboard load
+    checkGroqStatus();
+
     // Connect WebSocket
     window.roverWs.connect();
 });

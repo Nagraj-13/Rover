@@ -28,9 +28,24 @@ ultralytics>=8.1.0
 # VL53L0X Time-of-Flight Laser Distance Sensor (I2C)
 adafruit-circuitpython-vl53l0x>=3.7.0
 
+# Strategic Cloud Brain & Hybrid Intelligence (PRD Section 4)
+groq>=0.11.0
+requests>=2.31.0
+pydantic>=2.0.0
+
+# Environment & Secret Management
+python-dotenv>=1.0.0
+
+# Edge AI & SLM Integration (Native Packages)
+# - Cactus Needle 3 (Cactus Compute On-Device SLM Tool Calling)
+cactus-needle>=3.0.0
+# - Laya (System-1 Typed Decision Engine by NandhaKishorM)
+laya>=0.3.0
+
 # Note on OpenCV & Picamera2:
 # On Raspberry Pi OS, use system packages with --system-site-packages venv:
 #   sudo apt install -y python3-picamera2 python3-opencv python3-gpiozero python3-lgpio
 # If running outside system packages, uncomment below:
 # opencv-python-headless>=4.8.0
 # picamera2
+

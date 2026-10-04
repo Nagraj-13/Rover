@@ -176,6 +176,55 @@
          TAB 2: MISSIONS & AUTONOMY
          ====================================================================== -->
     <section id="tab-missions" class="tab-content">
+        <!-- Dynamic Groq API Key Input Layer Banner -->
+        <div id="groqBannerNotConfigured" class="groq-api-banner warning" style="margin-bottom: 16px;">
+            <div class="groq-banner-content">
+                <div class="groq-banner-header">
+                    <span class="groq-banner-icon">⚡</span>
+                    <div>
+                        <div style="font-weight: 700; color: var(--accent-amber);">Groq Cloud Strategic Brain Not Configured</div>
+                        <div style="font-size: 12px; color: var(--text-secondary); margin-top: 2px;">
+                            No Groq API key found in <code>.env</code>. Autonomous missions will compile using the local standalone fallback compiler. Enter your Groq API key below to dynamically enable ultra-fast Groq LPU reasoning.
+                        </div>
+                    </div>
+                </div>
+                <div class="groq-key-input-row">
+                    <input type="password" id="dynamicGroqKeyInput" class="nl-input" placeholder="Enter Groq API Key (gsk_...)" style="flex: 1; min-width: 240px; max-width: 380px;">
+                    <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); cursor: pointer;">
+                        <input type="checkbox" id="dynamicGroqSaveEnv" checked> Persist to .env
+                    </label>
+                    <button id="btnConnectGroqDynamic" class="header-action-btn active" style="padding: 8px 16px; cursor: pointer;">
+                        🔗 Connect Groq Cloud
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div id="groqBannerConfigured" class="groq-api-banner connected" style="display: none; margin-bottom: 16px;">
+            <div class="groq-banner-content" style="flex-direction: row; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                    <span class="status-dot"></span>
+                    <div>
+                        <span style="font-weight: 700; color: var(--accent-emerald);">Groq Cloud Active</span>
+                        <span id="groqMaskedKeyBadge" class="groq-masked-badge" style="margin-left: 6px;">gsk_...</span>
+                    </div>
+                    <!-- Dynamic Model Switcher Dropdown in Mission Banner -->
+                    <div style="display: inline-flex; align-items: center; gap: 6px; margin-left: 8px;">
+                        <span style="font-size: 11px; color: var(--text-secondary); font-weight: 600;">Model:</span>
+                        <select id="missionGroqModelSelect" class="nl-input" style="padding: 4px 10px; font-size: 12px; border-radius: var(--radius-sm); width: auto; max-width: 280px; background: rgba(14, 24, 38, 0.95); cursor: pointer;">
+                            <option value="openai/gpt-oss-120b">GPT-OSS 120B (Deep Strategic Reasoning)</option>
+                            <option value="openai/gpt-oss-20b">GPT-OSS 20B (Ultra-Fast Reasoning)</option>
+                            <option value="qwen/qwen3.8-27b">Qwen 3.8 27B (Precise Instructions)</option>
+                            <option value="allam-2-7b">ALLAM 2 7B (Lightweight)</option>
+                        </select>
+                    </div>
+                </div>
+                <button id="btnEditGroqKey" class="icon-btn" style="font-size: 11px; padding: 4px 10px; cursor: pointer;">
+                    ✏️ Change Key
+                </button>
+            </div>
+        </div>
+
         <div class="mission-panel-grid">
             <div class="card">
                 <div class="card-title">Strategic Mission Prompt</div>
@@ -193,7 +242,7 @@
                     </button>
                 </div>
 
-                <button class="icon-btn" style="background: var(--accent-cyan); color: #000; justify-content: center; padding: 12px;">
+                <button id="compileMissionBtn" class="icon-btn" style="background: var(--accent-cyan); color: #000; justify-content: center; padding: 12px; cursor: pointer;">
                     ✨ Compile & Launch Mission via Groq
                 </button>
             </div>
@@ -315,20 +364,50 @@
             </div>
 
             <div class="card">
-                <div class="card-title">External Integration Keys</div>
+                <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>External Integration Keys & Secrets</span>
+                    <span id="settingsGroqStatusPill" class="status-pill" style="font-size: 11px; padding: 2px 8px;">CHECKING...</span>
+                </div>
+                <div class="setting-row" style="flex-wrap: wrap; gap: 8px;">
+                    <div class="setting-info" style="flex: 1; min-width: 200px;">
+                        <span class="setting-name">Groq API Key (Tier 1 Brain)</span>
+                        <span class="setting-desc">Enables cloud mission compilation, root-cause triage, and debriefs</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="password" id="settingGroqKey" placeholder="gsk_..." class="nl-input" style="width: 160px;">
+                        <button id="btnSaveGroqSettings" class="icon-btn" style="padding: 6px 12px; cursor: pointer;">
+                            💾 Save Key
+                        </button>
+                    </div>
+                </div>
+                <div class="setting-row" style="flex-wrap: wrap; gap: 8px;">
+                    <div class="setting-info" style="flex: 1; min-width: 200px;">
+                        <span class="setting-name">Strategic Reasoning Model</span>
+                        <span class="setting-desc">Groq cloud model used for mission planning, root-cause triage & debriefs</span>
+                    </div>
+                    <select id="settingsGroqModelSelect" class="nl-input" style="width: auto; min-width: 260px; padding: 6px 12px; cursor: pointer;">
+                        <option value="openai/gpt-oss-120b">GPT-OSS 120B (Deep Strategic Reasoning)</option>
+                        <option value="openai/gpt-oss-20b">GPT-OSS 20B (Ultra-Fast Reasoning)</option>
+                        <option value="qwen/qwen3.8-27b">Qwen 3.8 27B (Precise Instructions)</option>
+                        <option value="allam-2-7b">ALLAM 2 7B (Lightweight)</option>
+                    </select>
+                </div>
                 <div class="setting-row">
                     <div class="setting-info">
-                        <span class="setting-name">Groq API Key</span>
-                        <span class="setting-desc">Required for cloud mission planning & debriefs</span>
+                        <span class="setting-name">Persist Secrets to .env</span>
+                        <span class="setting-desc">Saves API keys to local .env file so they persist across reboots</span>
                     </div>
-                    <input type="password" placeholder="gsk_..." class="nl-input" style="width: 140px;">
+                    <label class="switch">
+                        <input type="checkbox" id="settingPersistEnv" checked>
+                        <span class="slider-switch"></span>
+                    </label>
                 </div>
                 <div class="setting-row">
                     <div class="setting-info">
                         <span class="setting-name">Telegram Bot Token</span>
                         <span class="setting-desc">For perimeter alert photo dispatches</span>
                     </div>
-                    <input type="password" placeholder="bot_token..." class="nl-input" style="width: 140px;">
+                    <input type="password" placeholder="bot_token..." class="nl-input" style="width: 160px;">
                 </div>
             </div>
         </div>
