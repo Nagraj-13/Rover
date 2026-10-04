@@ -237,8 +237,10 @@ The dashboard is a single-page application organized into **5 dedicated tabs**:
 
 ### Tab 2: Missions & Autonomy
 - Strategic mission prompt input (e.g., *"Patrol warehouse perimeter. Alert if person detected"*).
+- **Dynamic Groq Model Selector:** Switch on-the-fly between `openai/gpt-oss-120b`, `openai/gpt-oss-20b`, `qwen/qwen3.8-27b`, and `allam-2-7b`.
+- **Dynamic API Key Banner:** If `GROQ_API_KEY` is not detected in `.env`, an in-browser key input with a "Persist to .env" toggle appears directly above the prompt bar.
 - Pre-configured mission chips for quick tactical dispatch.
-- Visual waypoint checklist and mission execution progress.
+- Visual waypoint checklist and real-time mission execution progress graph.
 
 ### Tab 3: Event Log & Evidence Gallery
 - Chronological stream of surveillance events (`INFO`, `WARNING`, `CRITICAL`).
@@ -251,42 +253,48 @@ The dashboard is a single-page application organized into **5 dedicated tabs**:
 - **12V Drive Battery:** Voltage estimation and charge state.
 
 ### Tab 5: Settings & Configuration
+- **Groq Cloud Brain Settings:** View active model, live dropdown selector, masked API key, and "Save to .env" checkbox.
 - YOLO Object Detection toggle (enables/disables inference thread on the fly).
 - Confidence threshold slider (10% to 90%).
+
 ---
 
-## 4-Tier Hybrid Intelligence Stack (Groq, Needle 2, Laya)
+## 4-Tier Hybrid Intelligence Stack (Groq, Needle, Laya, YOLO)
 
-EdgeRover integrates four complementary intelligence layers to balance sub-millisecond local reflexes with strategic cloud reasoning:
+EdgeRover integrates four complementary intelligence layers to balance microsecond local reflexes with strategic cloud reasoning:
 
 | Intelligence Layer | Engine / Framework | Latency | Role & Responsibility | Reference |
 | :--- | :--- | :--- | :--- | :--- |
-| **Tier 1: Cloud Reasoning** | **Groq Cloud API** (`llama-3.3-70b-versatile`) | ~300–600 ms | Strategic mission planning, ambiguity resolution, and post-mission executive debriefs. | [Groq API](https://groq.com) |
-| **Tier 2: Edge Tool Calling** | **Needle 2** (Cactus Compute 45M SLM) | ~5–25 ms | Sub-50ms natural language command parsing and direct tool dispatching without internet. | [cactus-compute/needle](https://github.com/cactus-compute/needle) |
-| **Tier 3: Decision Engine** | **Laya** (System-1 Decision Engine) | ~0.5–2 ms | Non-autoregressive typed decisions (`choice`, `score`, `noul`) over World State for instant hazard triage. | [NandhaKishorM/laya](https://github.com/NandhaKishorM/laya) |
+| **Tier 1: Cloud Reasoning** | **Groq Cloud API** (`openai/gpt-oss-120b`, `openai/gpt-oss-20b`, `qwen/qwen3.8-27b`) | ~300–600 ms | Strategic mission graph compilation, ambiguity resolution, and post-mission executive debriefs. Live dropdown in GCS. | [Groq API](https://groq.com) |
+| **Tier 2: Edge Tool Calling** | **Needle** (Cactus Compute Needle 3) | ~5–25 ms | Sub-50ms natural language command parsing and direct tool dispatching without internet. Runs `stateless=True` to prevent memory drift. | [cactus-compute/needle](https://github.com/cactus-compute/needle) |
+| **Tier 3: Decision Engine** | **Laya** (System-1 Decision Engine) | **< 0.3 ms** (Reflex) / ~15 ms (GPU) | Non-autoregressive typed decisions (`choice`, `score`, `noul`) over World State for instant hazard triage and 50Hz motor interlock. | [NandhaKishorM/laya](https://github.com/NandhaKishorM/laya) |
 | **Tier 4: Visual Perception** | **Ultralytics YOLO** (`yolov8n.pt` / `yolo26n`) | ~40–70 ms | Real-time object detection, ByteTrack tracking, and monocular distance estimation. | [Ultralytics](https://github.com/ultralytics/ultralytics) |
 
-### Running the Multi-Tier Intelligence Demo on a Laptop
+### Laya Dual-Engine Strategy
+1. **Embedded Reflex Engine (`< 0.3 ms`, > 3,500 ops/s):** Designed for real-time 50Hz safety-critical motor control on Raspberry Pi 5 / CPU. Guarantees microsecond emergency stops without GPU dependency.
+2. **Official Laya Checkpoint (`ModernBERT-large`, 421M params):** Official PyTorch / ONNX checkpoint from Hugging Face for semantic audit and scene classification (~10–15ms on Nvidia GPU).
 
-You can run the full multi-tier intelligence stack directly on your development laptop without Raspberry Pi hardware:
+### Running the Multi-Tier Intelligence Demo
+
+You can run the full multi-tier intelligence stack directly on your development laptop or Raspberry Pi:
 
 ```bash
-# Optional: provide Groq Cloud API key (will use built-in strategic compiler if omitted)
-export GROQ_API_KEY="gsk_..."   # On Linux/macOS
-$env:GROQ_API_KEY="gsk_..."      # On Windows PowerShell
+# 1. Configure your Groq API key in .env (or enter it via the Web GCS dashboard)
+cp .env.example .env
+# Edit .env and set: GROQ_API_KEY=gsk_...
 
-# Run the complete demonstration
+# 2. Run the complete demonstration and benchmark suite
 python sample_intelligence_demo.py
 ```
 
-The sample program demonstrates:
-1. **Needle 2 Tool Calling:** Dispatches atomic rover tools (`move_forward`, `turn_right`, `capture_evidence`) in <1ms and automatically detects complex missions to escalate to Groq.
+The demonstration verifies:
+1. **Needle Tool Calling:** Dispatches atomic rover tools (`move_forward`, `turn_right`, `capture_evidence`) with automatic speed normalization (`40%` -> `0.40`), escalating complex missions to Groq.
 2. **Laya System-1 Triage:** Evaluates nominal cruising, caution zone obstacles, and security intruder breaches with typed choice, score, and noul answers.
-3. **Groq Strategic Brain:** Compiles high-level user missions into step-by-step execution graphs and synthesizes executive debrief summaries.
-4. **Integrated Mission Simulation:** Simulates an autonomous patrol mission coordinating all three layers in real time.
-5. **Academic Benchmarking:** Measures throughput (>60,000 ops/sec) and p99 latency percentiles.
+3. **Groq Strategic Brain:** Compiles high-level user missions into step-by-step execution graphs and synthesizes executive debrief summaries with battery analytics.
+4. **Integrated Mission Simulation:** Simulates an autonomous patrol mission coordinating Groq, Needle, and Laya in real time.
+5. **Academic Benchmarking:** Measures throughput and latency percentiles comparing Official Laya, Embedded Reflex, and Cactus Needle 3.
 
-### Running the Web Ground Control Station on a Laptop
+### Running the Web Ground Control Station
 
 ```bash
 python app.py
@@ -342,17 +350,25 @@ journalctl -u rover.service -f
 ```text
 Rover/
 ├── app.py                      # Main control server, Picamera2 stream, motor API & GCS host
-├── requirements.txt            # Python dependencies (Flask, gpiozero, ultralytics, ToF driver)
+├── requirements.txt            # Python dependencies (Flask, gpiozero, ultralytics, ToF, groq, cactus, laya)
+├── .env.example                # Template for Groq API keys and default model configuration
+├── sample_intelligence_demo.py # Complete 3-tier simulation & academic benchmark suite
 ├── README.md                   # Setup guide and user documentation (this file)
 ├── PRD.md                      # Comprehensive Product Requirements Document & Architecture
 ├── PROJECT_CONTEXT.md          # Architectural history, hardware design notes, and philosophy
 │
+├── intelligence/               # 4-tier hybrid AI stack
+│   ├── groq_client.py          # Tier 1: Groq Cloud Brain with dynamic model switching
+│   ├── needle.py               # Tier 2: Cactus Needle 3 edge tool calling dispatcher
+│   ├── laya.py                 # Tier 3: Laya System-1 typed decision & reflex engine
+│   └── tools.py                # Canonical robotics tool registry (@needle.tool)
+│
 ├── static/                     # Lightweight, zero-build Ground Control Station (GCS)
-│   ├── index.html              # 5-tab responsive HTML5 dashboard
+│   ├── index.html              # 5-tab responsive HTML5 dashboard with model selector
 │   ├── css/
 │   │   └── dashboard.css       # Modern cyberpunk glassmorphic CSS3 design system
 │   └── js/
-│       ├── app.js              # Master GCS controller & tab manager
+│       ├── app.js              # Master GCS controller, model switcher & tab manager
 │       ├── teleop.js           # Touch pointer capture & keyboard (WASD) teleoperation
 │       ├── websocket.js        # Real-time WebSocket & REST telemetry client
 │       ├── canvas_hud.js       # Tactical canvas bounding-box & touch-to-lock engine
@@ -391,7 +407,9 @@ If one side turns backward when driving forward:
 - Power down the motor battery and swap the `M+` and `M-` wires on that specific driver terminal.
 
 ### Camera initialization fails (`picamera2` error)
-- Ensure the ribbon cable is seated firmly with contacts facing the motherboard PCB.
+- Ensure the 15-to-22 pin 0.5mm pitch FPC ribbon cable is seated firmly:
+  - **Pi 5 side (`CAM/DISP0`):** Contacts face **down** toward the motherboard PCB.
+  - **Camera 3 side:** Contacts face toward the back of the camera circuit board.
 - Verify camera detection with `rpicam-hello --list-cameras`.
 - Do not use `MJPEGEncoder(num_buffers=4)` on Raspberry Pi 5. The codebase uses `MJPEGEncoder()`.
 
