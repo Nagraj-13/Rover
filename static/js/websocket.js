@@ -39,6 +39,7 @@ class RoverTelemetryClient {
 
             this.socket.onopen = () => {
                 this.isConnected = true;
+                this.wsFailed = false;
                 this.reconnectAttempts = 0;
                 this.stopFallbackPolling();
                 this.notifyStatus(true, this.latencyMs);
@@ -64,28 +65,30 @@ class RoverTelemetryClient {
                 }
             };
 
-            this.socket.onclose = (event) => {
-                this.isConnected = false;
-                this.stopPingLoop();
-                this.notifyStatus(false, 0);
-                console.warn("[RoverWS] Socket closed. Attempting reconnect...", event.code);
-                this.scheduleReconnect();
-            };
-
             this.socket.onerror = (err) => {
-                console.warn("[RoverWS] WebSocket error, starting HTTP fallback polling.", err);
+                this.wsFailed = true;
                 this.startFallbackPolling();
             };
 
+            this.socket.onclose = (event) => {
+                this.isConnected = false;
+                this.stopPingLoop();
+                if (this.wsFailed) {
+                    // Backend is in HTTP mode; stay on fast fallback polling without retry spam
+                    this.startFallbackPolling();
+                    return;
+                }
+                this.scheduleReconnect();
+            };
+
         } catch (e) {
-            console.error("[RoverWS] Failed to create WebSocket, falling back to HTTP:", e);
+            this.wsFailed = true;
             this.startFallbackPolling();
         }
     }
 
     scheduleReconnect() {
-        if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-            console.error("[RoverWS] Max reconnect attempts reached. Using HTTP polling.");
+        if (this.wsFailed || this.reconnectAttempts >= this.maxReconnectAttempts) {
             this.startFallbackPolling();
             return;
         }

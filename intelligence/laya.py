@@ -218,21 +218,26 @@ class LayaDecisionEngine:
     # OFFICIAL LAYA PREDICT INTERFACE
     # ==========================================================================
 
-    def predict(self, state_text: str, questions: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def predict(
+        self,
+        state_text: str,
+        questions: Optional[Dict[str, Any]] = None,
+        force_reflex: bool = False,
+    ) -> Dict[str, Any]:
         """
         Direct compatibility with `laya.Router().predict(state_text, questions)`.
         Returns dictionary of typed answers (`choice`, `score`, `noul`).
         """
         questions = questions or ROVER_LAYA_QUESTIONS
 
-        # If official router is loaded
-        if self.laya_router is not None:
+        # If official router is loaded and reflex mode is not forced
+        if self.laya_router is not None and not force_reflex:
             try:
                 return self.laya_router.predict(state_text, questions)
             except Exception as e:
                 logger.warning("Official Laya predict failed: %s. Falling back to embedded engine.", e)
 
-        # Embedded high-speed engine prediction
+        # Embedded high-speed engine prediction (<0.3ms)
         answers: Dict[str, Any] = {}
         text_lower = state_text.lower()
 
@@ -294,7 +299,7 @@ class LayaDecisionEngine:
     # TRIAGE EVALUATION (High-Speed System-1)
     # ==========================================================================
 
-    def evaluate_triage(self, state: WorldState) -> TriageDecision:
+    def evaluate_triage(self, state: WorldState, force_reflex: bool = False) -> TriageDecision:
         """
         Fast triage of incoming sensory data.
         Maps Laya non-autoregressive answers to typed EdgeRover decisions.
@@ -303,7 +308,7 @@ class LayaDecisionEngine:
         state_text = state.to_state_text()
 
         # Query Laya prediction (sub-millisecond embedded or model checkpoint)
-        laya_res = self.predict(state_text, ROVER_LAYA_QUESTIONS)
+        laya_res = self.predict(state_text, ROVER_LAYA_QUESTIONS, force_reflex=force_reflex)
         answers = laya_res.get("answers", {})
 
         sev_choice = answers.get("severity", {}).get("choice", "info").lower()
@@ -356,7 +361,7 @@ class LayaDecisionEngine:
         self._eval_count += 1
         self._total_latency_ms += latency_ms
 
-        engine_name = "official_laya" if self.laya_router else "embedded_laya"
+        engine_name = "official_laya" if (self.laya_router and not force_reflex) else "embedded_laya"
 
         return TriageDecision(
             severity=severity,
@@ -368,6 +373,13 @@ class LayaDecisionEngine:
             engine=engine_name,
             latency_ms=latency_ms,
         )
+
+    def evaluate_reflex_triage(self, state: WorldState) -> TriageDecision:
+        """
+        Sub-millisecond deterministic reflex triage for real-time 50Hz telemetry loops.
+        Bypasses heavy neural forward passes to guarantee zero lag on Raspberry Pi.
+        """
+        return self.evaluate_triage(state, force_reflex=True)
 
     # ==========================================================================
     # NAVIGATION & AVOIDANCE VECTORING
