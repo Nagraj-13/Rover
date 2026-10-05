@@ -173,7 +173,8 @@ document.addEventListener("DOMContentLoaded", () => {
             });
             const data = await res.json();
             if (data.success) {
-                showToast(`Executed: ${data.tool_called || "Command acknowledged"}`);
+                showToast(data.message || `Executed: ${data.tool_called || "Command acknowledged"}`);
+                if (data.mission && data.mission_started) renderMission(data.mission, true);
             } else {
                 showToast(`Error: ${data.error || "Unable to parse command"}`);
             }
@@ -251,6 +252,51 @@ document.addEventListener("DOMContentLoaded", () => {
     const missionTextarea = document.getElementById("missionPromptArea");
     const missionStepList = document.querySelector(".mission-step-list");
 
+    // Mission rendering + live progress polling
+    let missionPollTimer = null;
+    const STEP_CLASS = { pending: "pending", running: "active", done: "done", failed: "failed", aborted: "aborted", skipped: "skipped" };
+
+    function renderMission(m, startPolling) {
+        if (!missionStepList || !m.steps) return;
+        missionStepList.innerHTML = m.steps.map(s => `
+            <div class="mission-step-item" data-step="${s.step_number}">
+                <span class="step-status-icon pending">${s.step_number}</span>
+                <div>
+                    <div style="font-weight: 500;">${s.title}</div>
+                    <div style="font-size: 11px; color: var(--accent-cyan); font-family: monospace;">${s.tool_name}(${JSON.stringify(s.parameters)})</div>
+                    <div class="step-msg" style="font-size: 11px; color: var(--text-muted);"></div>
+                </div>
+            </div>
+        `).join("");
+        if (startPolling) pollMission();
+    }
+
+    function pollMission() {
+        clearInterval(missionPollTimer);
+        const tick = async () => {
+            try {
+                const res = await fetch("/rover/api/missions/status");
+                const data = await res.json();
+                const st = data.mission || {};
+                (st.steps || []).forEach(step => {
+                    const row = missionStepList && missionStepList.querySelector(`[data-step="${step.step_number}"]`);
+                    if (!row) return;
+                    const icon = row.querySelector(".step-status-icon");
+                    icon.className = `step-status-icon ${STEP_CLASS[step.status] || "pending"}`;
+                    row.querySelector(".step-msg").textContent = step.message || "";
+                });
+                if (st.state && st.state !== "running") {
+                    clearInterval(missionPollTimer);
+                    missionPollTimer = null;
+                    const label = { completed: "✅ Mission complete", failed: `❌ Mission failed: ${st.error || ""}`, aborted: "🛑 Mission aborted" }[st.state];
+                    if (label) showToast(label);
+                }
+            } catch (e) { /* transient network error: keep polling */ }
+        };
+        tick();
+        missionPollTimer = setInterval(tick, 700);
+    }
+
     if (compileBtn && missionTextarea) {
         compileBtn.addEventListener("click", async () => {
             const prompt = missionTextarea.value.trim();
@@ -273,17 +319,19 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (data.success && data.mission) {
                     const m = data.mission;
                     showToast(`✨ Mission compiled: ${m.title}`);
+                    renderMission(m, false);
 
-                    if (missionStepList && m.steps) {
-                        missionStepList.innerHTML = m.steps.map(s => `
-                            <div class="mission-step-item">
-                                <span class="step-status-icon pending">${s.step_number}</span>
-                                <div>
-                                    <div style="font-weight: 500;">${s.title}</div>
-                                    <div style="font-size: 11px; color: var(--accent-cyan); font-family: monospace;">${s.tool_name}(${JSON.stringify(s.parameters)})</div>
-                                </div>
-                            </div>
-                        `).join("");
+                    const runRes = await fetch("/rover/api/missions/execute", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ mission: m })
+                    });
+                    const runData = await runRes.json();
+                    if (runData.success) {
+                        showToast("🚀 Mission running — press E-STOP to abort");
+                        pollMission();
+                    } else {
+                        showToast(`Mission not started: ${runData.message || runData.error}`);
                     }
                 } else {
                     showToast(`Compilation error: ${data.error || "Unknown error"}`);

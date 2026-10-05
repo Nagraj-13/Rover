@@ -60,6 +60,7 @@ except (ImportError, Exception):
 
 from sensors import DistanceSensor
 from vision import YOLODetector
+from motion import MissionRunner, MotionController
 
 # 4-Tier Hybrid Intelligence Stack (PRD Section 4)
 from intelligence import (
@@ -248,9 +249,14 @@ detector.start()
 # SENSORS / VL53L0X DISTANCE SENSOR SETUP
 # ============================================================
 
+# No VL53L0X is fitted at the moment. Set ROVER_DISTANCE_SENSOR=1 to turn the
+# obstacle interceptor and live range telemetry back on once it is wired up.
+DISTANCE_SENSOR_ENABLED = os.environ.get("ROVER_DISTANCE_SENSOR", "0") == "1"
+
 distance_sensor = DistanceSensor(
     safety_threshold_cm=30.0,
-    poll_interval_s=0.033
+    poll_interval_s=0.033,
+    enabled=DISTANCE_SENSOR_ENABLED
 )
 distance_sensor.start()
 
@@ -342,24 +348,72 @@ def build_current_world_state() -> WorldState:
     )
 
 
-# Helper: Motion execution for Needle tool bindings
-def execute_motion_tool(cmd: str, speed: float, duration_seconds: float = 1.0):
-    success = execute_command(cmd, speed)
-    if duration_seconds > 0 and success:
-        def delayed_stop():
-            time.sleep(duration_seconds)
-            stop_motors()
-        threading.Thread(target=delayed_stop, daemon=True).start()
-    return {"status": "executed", "command": cmd, "speed": speed, "duration": duration_seconds, "success": success}
+# ------------------------------------------------------------
+# Open-loop motion planning (distance -> time, angle -> time)
+# ------------------------------------------------------------
+
+def touch_heartbeat():
+    """Keep the safety watchdog fed while a timed move is running."""
+    global last_control_time
+    with motor_lock:
+        last_control_time = time.monotonic()
+
+
+motion = MotionController(
+    drive_fn=execute_command,
+    stop_fn=stop_motors,
+    heartbeat_fn=touch_heartbeat,
+)
+mission_runner = MissionRunner(tool_registry, motion)
+
+
+def emergency_stop():
+    """Abort any running mission, drop queued moves and cut the motors."""
+    mission_runner.abort("Emergency stop")
+    motion.cancel_all()
+    stop_motors()
+    return {"status": "stopped", "success": True}
+
+
+def planned_move(command, speed=None, duration_seconds=None, distance_cm=None, degrees=None):
+    """Queue a timed move; returns immediately with the planned duration and job id."""
+    job = motion.submit(command, speed=speed, duration_s=duration_seconds,
+                        distance_cm=distance_cm, degrees=degrees)
+    out = job.to_dict()
+    out["status"] = "queued"
+    out["success"] = True
+    return out
+
+
+def tool_move_forward(speed=None, duration_seconds=None, distance_cm=None):
+    return planned_move("forward", speed, duration_seconds, distance_cm)
+
+
+def tool_move_backward(speed=None, duration_seconds=None, distance_cm=None):
+    return planned_move("backward", speed, duration_seconds, distance_cm)
+
+
+def tool_turn_left(speed=None, degrees=None, duration_seconds=None):
+    return planned_move("left", speed, duration_seconds, None, degrees)
+
+
+def tool_turn_right(speed=None, degrees=None, duration_seconds=None):
+    return planned_move("right", speed, duration_seconds, None, degrees)
+
+
+def tool_scan_surroundings(degrees=360.0, speed=None):
+    # The camera is fixed (no pan servo), so "scanning" means rotating the whole chassis.
+    return planned_move("right", speed, None, None, degrees)
 
 
 # Bind Rover Hardware into strictly typed Tool Registry
+tool_registry.register_tool("scan_surroundings", tool_scan_surroundings)
 tool_registry.bind_rover_hardware(
-    move_forward_fn=lambda speed=0.35, duration_seconds=1.0: execute_motion_tool("forward", speed, duration_seconds),
-    move_backward_fn=lambda speed=0.30, duration_seconds=1.0: execute_motion_tool("backward", speed, duration_seconds),
-    turn_left_fn=lambda speed=0.35, degrees=90.0, duration_seconds=0.6: execute_motion_tool("left", speed, duration_seconds),
-    turn_right_fn=lambda speed=0.35, degrees=90.0, duration_seconds=0.6: execute_motion_tool("right", speed, duration_seconds),
-    stop_rover_fn=lambda: stop_motors(),
+    move_forward_fn=tool_move_forward,
+    move_backward_fn=tool_move_backward,
+    turn_left_fn=tool_turn_left,
+    turn_right_fn=tool_turn_right,
+    stop_rover_fn=emergency_stop,
     capture_evidence_fn=lambda reason="Surveillance event", severity="INFO": detector.capture_evidence(reason=reason, severity=severity),
     get_telemetry_fn=lambda: build_current_world_state().to_dict(),
 )
@@ -1254,6 +1308,12 @@ def control():
             "error": "Invalid command"
         }), 400
 
+    # Manual input always wins over a running mission / queued moves.
+    if mission_runner.is_running() or motion.status()["busy"]:
+        emergency_stop()
+        if command == "stop":
+            return jsonify({"success": True, "command": "stop", "speed": speed})
+
     success = execute_command(command, speed)
 
     return jsonify({
@@ -1293,6 +1353,8 @@ def status():
             "ram_used_mb": 1120,
         },
         "safety": distance_sensor.get_status(),
+        "motion": motion.status(),
+        "mission": mission_runner.status(),
         "vision": detector.get_status(),
         "laya": {
             "triage": laya_triage.to_dict(),
@@ -1432,12 +1494,16 @@ def natural_language_command():
         # Complex multi-step strategic mission -> Route to Groq (Tier 1)
         world_state = build_current_world_state()
         mission = groq_brain.compile_mission(prompt, world_state.to_dict())
+        mission_dict = mission.to_dict()
+        started, run_msg = mission_runner.start(mission_dict)
         return jsonify({
             "success": True,
             "tier": "groq_cloud",
-            "action": "mission_compiled",
-            "mission": mission.to_dict(),
-            "message": f"Mission '{mission.title}' compiled via {mission.compiler_source} in {mission.compilation_latency_ms:.1f}ms."
+            "action": "mission_started" if started else "mission_compiled",
+            "mission": mission_dict,
+            "mission_started": started,
+            "message": f"Mission '{mission.title}' compiled via {mission.compiler_source} in "
+                       f"{mission.compilation_latency_ms:.1f}ms. {run_msg}."
         })
 
     return jsonify(dispatch_res.to_dict())
@@ -1459,6 +1525,68 @@ def create_mission():
     world_state = build_current_world_state()
     mission = groq_brain.compile_mission(prompt, world_state.to_dict())
     return jsonify({"success": True, "mission": mission.to_dict()})
+
+
+@app.route(f"{ROVER_PATH}/api/missions/execute", methods=["POST"])
+@app.route("/api/missions/execute", methods=["POST"])
+def execute_mission():
+    """Runs a compiled mission (from /api/missions/create) step by step on the rover."""
+    data = request.get_json(silent=True) or {}
+    mission = data.get("mission")
+    if not mission and data.get("prompt"):
+        world_state = build_current_world_state()
+        mission = groq_brain.compile_mission(str(data["prompt"]).strip(), world_state.to_dict()).to_dict()
+    if not isinstance(mission, dict):
+        return jsonify({"success": False, "error": "Provide 'mission' or 'prompt'"}), 400
+
+    started, message = mission_runner.start(mission)
+    status_code = 200 if started else 409
+    return jsonify({"success": started, "message": message, "status": mission_runner.status()}), status_code
+
+
+@app.route(f"{ROVER_PATH}/api/missions/status")
+@app.route("/api/missions/status")
+def mission_status():
+    return jsonify({"success": True, "mission": mission_runner.status(), "motion": motion.status()})
+
+
+@app.route(f"{ROVER_PATH}/api/missions/abort", methods=["POST"])
+@app.route("/api/missions/abort", methods=["POST"])
+def abort_mission():
+    emergency_stop()
+    return jsonify({"success": True, "mission": mission_runner.status()})
+
+
+# ============================================================
+# MOTION CALIBRATION (dead-reckoning constants)
+# ============================================================
+#
+#   GET  /api/calibration
+#   POST /api/calibration/adjust {"axis":"linear","commanded":100,"measured":82}
+#        -> run "forward 100 cm", measure what the rover really did, send both numbers.
+#   POST /api/calibration/adjust {"axis":"turn","commanded":90,"measured":70}
+#   POST /api/calibration {"deadband":0.25,"drive_speed":0.6}   (set values directly)
+
+@app.route(f"{ROVER_PATH}/api/calibration", methods=["GET", "POST"])
+@app.route("/api/calibration", methods=["GET", "POST"])
+def calibration():
+    if request.method == "POST":
+        try:
+            motion.cal.update(request.get_json(silent=True) or {})
+        except (TypeError, ValueError) as e:
+            return jsonify({"success": False, "error": str(e)}), 400
+    return jsonify({"success": True, "calibration": motion.cal.get()})
+
+
+@app.route(f"{ROVER_PATH}/api/calibration/adjust", methods=["POST"])
+@app.route("/api/calibration/adjust", methods=["POST"])
+def calibration_adjust():
+    data = request.get_json(silent=True) or {}
+    try:
+        values = motion.cal.adjust(data.get("axis"), data.get("commanded"), data.get("measured"))
+    except (TypeError, ValueError) as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    return jsonify({"success": True, "calibration": values})
 
 
 @app.route(f"{ROVER_PATH}/api/missions/debrief", methods=["POST"])
@@ -1547,7 +1675,7 @@ def shutdown():
 
     # Stop motors
     try:
-        stop_motors()
+        emergency_stop()
     except Exception:
         pass
 
@@ -1583,6 +1711,8 @@ if __name__ == "__main__":
     print()
     print(f"Camera:         {CAMERA_WIDTH}x{CAMERA_HEIGHT}")
     print(f"Default speed:  {int(DEFAULT_SPEED * 100)}%")
+    print(f"Distance sensor: {'ON' if DISTANCE_SENSOR_ENABLED else 'OFF (open-loop timed moves; set ROVER_DISTANCE_SENSOR=1 to enable)'}")
+    print(f"Calibration:    {motion.cal.get()}")
     print(f"YOLO Model:     {YOLO_MODEL} (Inference {YOLO_IMGSZ}x{YOLO_IMGSZ})")
     print()
     print("Motor mapping:")

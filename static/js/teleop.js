@@ -84,12 +84,12 @@ class RoverTeleopController {
         eStopBtns.forEach(btn => {
             btn.addEventListener("click", (e) => {
                 e.preventDefault();
-                this.stopMovement();
+                this.stopMovement(true);
                 if (window.roverAudio) window.roverAudio.playEstopSound();
             });
             btn.addEventListener("touchstart", (e) => {
                 e.preventDefault();
-                this.stopMovement();
+                this.stopMovement(true);
                 if (window.roverAudio) window.roverAudio.playEstopSound();
             }, { passive: false });
         });
@@ -105,7 +105,7 @@ class RoverTeleopController {
 
             e.preventDefault();
             if (command === "stop") {
-                this.stopMovement();
+                this.stopMovement(true);
                 if (window.roverAudio) window.roverAudio.playEstopSound();
                 return;
             }
@@ -167,7 +167,11 @@ class RoverTeleopController {
         }, this.heartbeatIntervalMs);
     }
 
-    stopMovement() {
+    // force=true is for deliberate e-stops: it is sent even when no button is held,
+    // which also aborts a running mission. Passive stops (tab blur, button release)
+    // only fire when this controller was actually driving, so they never cancel a mission.
+    stopMovement(force = false) {
+        const wasDriving = this.activeCommand !== null;
         this.activeCommand = null;
         clearInterval(this.heartbeatTimer);
         this.heartbeatTimer = null;
@@ -176,7 +180,7 @@ class RoverTeleopController {
         document.querySelectorAll("[data-command]").forEach(btn => btn.classList.remove("active"));
 
         // Transmit active stop
-        this.dispatchCommand("stop");
+        if (wasDriving || force) this.dispatchCommand("stop");
     }
 
     dispatchCommand(command) {

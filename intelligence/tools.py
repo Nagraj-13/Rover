@@ -63,6 +63,12 @@ ROVER_TOOLS_SCHEMAS: List[Dict[str, Any]] = [
                     "default": 0.35,
                     "description": "Motor throttle speed fraction between 0.1 and 1.0."
                 },
+                "distance_cm": {
+                    "type": "number",
+                    "minimum": 1.0,
+                    "maximum": 5000.0,
+                    "description": "Distance to travel in centimetres. The controller converts it to motor time; preferred over duration_seconds."
+                },
                 "duration_seconds": {
                     "type": "number",
                     "minimum": 0.1,
@@ -70,8 +76,7 @@ ROVER_TOOLS_SCHEMAS: List[Dict[str, Any]] = [
                     "default": 1.0,
                     "description": "Drive duration in seconds before halting."
                 }
-            },
-            "required": ["duration_seconds"]
+            }
         }
     },
     {
@@ -87,6 +92,12 @@ ROVER_TOOLS_SCHEMAS: List[Dict[str, Any]] = [
                     "default": 0.30,
                     "description": "Motor reverse throttle speed fraction between 0.1 and 1.0."
                 },
+                "distance_cm": {
+                    "type": "number",
+                    "minimum": 1.0,
+                    "maximum": 5000.0,
+                    "description": "Distance to travel in centimetres. The controller converts it to motor time; preferred over duration_seconds."
+                },
                 "duration_seconds": {
                     "type": "number",
                     "minimum": 0.1,
@@ -94,8 +105,7 @@ ROVER_TOOLS_SCHEMAS: List[Dict[str, Any]] = [
                     "default": 1.0,
                     "description": "Reverse drive duration in seconds before halting."
                 }
-            },
-            "required": ["duration_seconds"]
+            }
         }
     },
     {
@@ -123,7 +133,7 @@ ROVER_TOOLS_SCHEMAS: List[Dict[str, Any]] = [
                     "minimum": 0.1,
                     "maximum": 10.0,
                     "default": 0.6,
-                    "description": "Optional rotation duration in seconds."
+                    "description": "Optional rotation duration in seconds. Ignored when degrees is given."
                 }
             }
         }
@@ -153,7 +163,7 @@ ROVER_TOOLS_SCHEMAS: List[Dict[str, Any]] = [
                     "minimum": 0.1,
                     "maximum": 10.0,
                     "default": 0.6,
-                    "description": "Optional rotation duration in seconds."
+                    "description": "Optional rotation duration in seconds. Ignored when degrees is given."
                 }
             }
         }
@@ -481,58 +491,64 @@ except Exception:
         return fn
 
 
-@needle_tool
-def move_forward(speed: float = 0.35, duration_seconds: float = 1.0) -> Dict[str, Any]:
-    """Drive rover forward for a specific duration or until stopped.
-
-    Args:
-        speed: Motor throttle speed fraction between 0.1 and 1.0 (or percentage 10-100).
-        duration_seconds: Drive duration in seconds before halting.
-    """
-    if speed > 1.0:
-        speed = min(round(speed / 100.0, 2), 1.0)
-    return tool_registry.execute("move_forward", {"speed": speed, "duration_seconds": duration_seconds}).to_dict()
+def _norm_speed(speed):
+    if speed is not None and speed > 1.0:
+        return min(round(speed / 100.0, 2), 1.0)
+    return speed
 
 
-@needle_tool
-def move_backward(speed: float = 0.30, duration_seconds: float = 1.0) -> Dict[str, Any]:
-    """Drive rover in reverse for a specific duration.
-
-    Args:
-        speed: Motor reverse throttle speed fraction between 0.1 and 1.0 (or percentage 10-100).
-        duration_seconds: Reverse drive duration in seconds before halting.
-    """
-    if speed > 1.0:
-        speed = min(round(speed / 100.0, 2), 1.0)
-    return tool_registry.execute("move_backward", {"speed": speed, "duration_seconds": duration_seconds}).to_dict()
+def _run_motion(tool: str, **kwargs) -> Dict[str, Any]:
+    """Drop unset (None) arguments so the registry only validates what the caller supplied."""
+    args = {k: v for k, v in kwargs.items() if v is not None}
+    if "speed" in args:
+        args["speed"] = _norm_speed(args["speed"])
+    return tool_registry.execute(tool, args).to_dict()
 
 
 @needle_tool
-def turn_left(speed: float = 0.35, degrees: float = 90.0, duration_seconds: float = 0.6) -> Dict[str, Any]:
-    """Pivot or spin rover counter-clockwise to the left.
+def move_forward(distance_cm: Optional[float] = None, duration_seconds: Optional[float] = None, speed: Optional[float] = None) -> Dict[str, Any]:
+    """Drive rover forward a set distance (or time). Prefer distance_cm when the user gives a distance.
 
     Args:
-        speed: Turn throttle speed.
-        degrees: Approximate angular rotation degrees to turn.
-        duration_seconds: Rotation duration in seconds.
+        distance_cm: Distance to travel in centimetres (convert metres/feet first).
+        duration_seconds: Drive time in seconds; only use when no distance was given.
+        speed: Motor throttle fraction 0.1-1.0 (or percentage 10-100). Omit for the calibrated default.
     """
-    if speed > 1.0:
-        speed = min(round(speed / 100.0, 2), 1.0)
-    return tool_registry.execute("turn_left", {"speed": speed, "degrees": degrees, "duration_seconds": duration_seconds}).to_dict()
+    return _run_motion("move_forward", distance_cm=distance_cm, duration_seconds=duration_seconds, speed=speed)
 
 
 @needle_tool
-def turn_right(speed: float = 0.35, degrees: float = 90.0, duration_seconds: float = 0.6) -> Dict[str, Any]:
-    """Pivot or spin rover clockwise to the right.
+def move_backward(distance_cm: Optional[float] = None, duration_seconds: Optional[float] = None, speed: Optional[float] = None) -> Dict[str, Any]:
+    """Drive rover in reverse a set distance (or time).
 
     Args:
-        speed: Turn throttle speed.
-        degrees: Approximate angular rotation degrees to turn.
-        duration_seconds: Rotation duration in seconds.
+        distance_cm: Distance to travel in centimetres.
+        duration_seconds: Reverse time in seconds; only use when no distance was given.
+        speed: Motor throttle fraction 0.1-1.0 (or percentage 10-100). Omit for the calibrated default.
     """
-    if speed > 1.0:
-        speed = min(round(speed / 100.0, 2), 1.0)
-    return tool_registry.execute("turn_right", {"speed": speed, "degrees": degrees, "duration_seconds": duration_seconds}).to_dict()
+    return _run_motion("move_backward", distance_cm=distance_cm, duration_seconds=duration_seconds, speed=speed)
+
+
+@needle_tool
+def turn_left(degrees: Optional[float] = None, speed: Optional[float] = None) -> Dict[str, Any]:
+    """Pivot rover counter-clockwise in place by an angle (default 90).
+
+    Args:
+        degrees: Rotation angle in degrees.
+        speed: Turn throttle fraction 0.1-1.0. Omit for the calibrated default.
+    """
+    return _run_motion("turn_left", degrees=degrees, speed=speed)
+
+
+@needle_tool
+def turn_right(degrees: Optional[float] = None, speed: Optional[float] = None) -> Dict[str, Any]:
+    """Pivot rover clockwise in place by an angle (default 90).
+
+    Args:
+        degrees: Rotation angle in degrees.
+        speed: Turn throttle fraction 0.1-1.0. Omit for the calibrated default.
+    """
+    return _run_motion("turn_right", degrees=degrees, speed=speed)
 
 
 @needle_tool

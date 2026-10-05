@@ -789,6 +789,17 @@ html, body {
     color: #000;
 }
 
+.step-status-icon.failed,
+.step-status-icon.aborted {
+    background: #d9534f;
+    color: #fff;
+}
+
+.step-status-icon.skipped {
+    background: rgba(255, 255, 255, 0.25);
+    color: var(--text-muted);
+}
+
 /* ==============================================================================
    TAB 3: EVENT LOG & EVIDENCE GALLERY
    ============================================================================== */

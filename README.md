@@ -440,3 +440,27 @@ By default, pip on ARM64 may attempt to download massive NVIDIA CUDA packages (>
 ## License
 
 This project is open-source. Feel free to modify and expand for educational, robotics, and research applications.
+
+## Distance and turn commands (no sensors, no camera servo)
+
+With no VL53L0X, encoders or IMU, the rover drives **open loop**: `motion.py` converts a
+distance or angle into motor-on time using `calibration.json` (created on first calibration;
+defaults live in `motion.py`).
+
+- "go straight for 100 cm then turn left" runs on the edge in order, no cloud call.
+- Missions (`Compile & Launch`) now actually execute, with live step status. The E-STOP button aborts them.
+- The camera is fixed, so "scan" rotates the whole rover.
+- Enable the obstacle sensor again with `ROVER_DISTANCE_SENSOR=1 python3 app.py`.
+
+**Calibrate once per floor surface / battery level.** Send "forward 100 cm", measure the real distance, then:
+
+```bash
+curl -X POST localhost:8080/rover/api/calibration/adjust -H 'Content-Type: application/json' \
+     -d '{"axis":"linear","commanded":100,"measured":82}'
+# same for turns: "turn left 90 degrees", measure the real angle
+curl -X POST localhost:8080/rover/api/calibration/adjust -H 'Content-Type: application/json' \
+     -d '{"axis":"turn","commanded":90,"measured":70}'
+```
+
+`deadband` is the throttle below which the wheels do not move; raise it via
+`POST /rover/api/calibration {"deadband":0.25}` if low speeds stall. Offline checks: `python test_motion.py`.

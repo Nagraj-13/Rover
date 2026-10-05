@@ -35,6 +35,7 @@ class DistanceSensor:
 
     DEFAULT_I2C_ADDRESS = 0x29
     SAFETY_THRESHOLD_CM = 30.0
+    NO_SENSOR_DISTANCE_CM = 999.0
 
     def __init__(
         self,
@@ -43,7 +44,10 @@ class DistanceSensor:
         safety_threshold_cm: float = SAFETY_THRESHOLD_CM,
         poll_interval_s: float = 0.033,  # ~30 Hz
         simulate: bool = False,
+        enabled: bool = True,
     ):
+        # enabled=False: no sensor fitted. Never polls, always reports "path clear".
+        self.enabled = enabled
         self.i2c_bus_num = i2c_bus
         self.address = address
         self.safety_threshold_cm = safety_threshold_cm
@@ -52,7 +56,7 @@ class DistanceSensor:
 
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
-        self._current_distance_cm: float = 120.0
+        self._current_distance_cm: float = 120.0 if enabled else self.NO_SENSOR_DISTANCE_CM
         self._last_read_time: float = 0.0
         self._sensor_initialized: bool = False
         self._sensor_hw = None
@@ -60,6 +64,10 @@ class DistanceSensor:
 
     def start(self) -> None:
         """Initialize the sensor and start background polling."""
+        if not self.enabled:
+            logger.info("DistanceSensor disabled (no sensor fitted); obstacle checks are off.")
+            return
+
         if self._poll_thread and self._poll_thread.is_alive():
             return
 
@@ -137,6 +145,8 @@ class DistanceSensor:
         Check if an obstacle is within the safety threshold.
         Used by the safety controller to prevent forward motion.
         """
+        if not self.enabled:
+            return False
         cutoff = threshold_cm if threshold_cm is not None else self.safety_threshold_cm
         return self.get_distance_cm() < cutoff
 
@@ -146,7 +156,8 @@ class DistanceSensor:
             dist = self._current_distance_cm
             return {
                 "distance_cm": dist,
-                "obstacle_detected": dist < self.safety_threshold_cm,
+                "enabled": self.enabled,
+                "obstacle_detected": self.enabled and dist < self.safety_threshold_cm,
                 "safety_threshold_cm": self.safety_threshold_cm,
                 "simulated": self.simulate,
                 "hardware_available": VL53L0X_HARDWARE_AVAILABLE,

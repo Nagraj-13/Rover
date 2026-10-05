@@ -374,22 +374,30 @@ class GroqBrain:
             "You are the Strategic Cloud Brain for EdgeRover (a Raspberry Pi 5 4WD autonomous patrol rover).\n"
             "Your task is to compile the user's natural language mission prompt into a valid JSON MissionSpec.\n"
             "The rover operates strictly with these available tools:\n"
-            "- move_forward(speed: 0.1-1.0, duration_seconds: 0.1-60.0)\n"
-            "- move_backward(speed: 0.1-1.0, duration_seconds: 0.1-30.0)\n"
-            "- turn_left(speed: 0.1-1.0, degrees: 1-360, duration_seconds: 0.1-10.0)\n"
-            "- turn_right(speed: 0.1-1.0, degrees: 1-360, duration_seconds: 0.1-10.0)\n"
+            "- move_forward(distance_cm: 1-5000, speed: 0.1-1.0 optional)  # duration_seconds only if no distance is given\n"
+            "- move_backward(distance_cm: 1-5000, speed: 0.1-1.0 optional)\n"
+            "- turn_left(degrees: 1-360, speed: 0.1-1.0 optional)  # in-place pivot\n"
+            "- turn_right(degrees: 1-360, speed: 0.1-1.0 optional)\n"
             "- stop_rover()\n"
             "- scan_surroundings(degrees: 360, speed: 0.3)\n"
             "- capture_evidence(reason: str, severity: 'INFO'|'WARNING'|'CRITICAL')\n"
             "- get_rover_telemetry()\n"
             "- send_telegram_alert(message: str, attach_photo: bool)\n\n"
+            "HARDWARE FACTS (plan around them):\n"
+            "- There is NO distance/obstacle sensor and NO odometry. Motion is open loop: the rover converts "
+            "distance_cm and degrees into motor-on time itself, so ALWAYS give distances in centimetres "
+            "(convert metres/feet) and turns in degrees. Never compute durations yourself.\n"
+            "- The camera is FIXED to the chassis (no pan/tilt servo). To look in another direction the whole rover "
+            "must turn (turn_left/turn_right/scan_surroundings) before capture_evidence.\n"
+            "- Keep steps in the exact order the user described. Do not add extra movement the user did not ask for. "
+            "Use speed only if the user specified one.\n\n"
             "Respond ONLY with valid JSON following this exact schema:\n"
             "{\n"
             '  "title": "Short descriptive mission title",\n'
             '  "description": "Clear high-level strategic summary",\n'
             '  "target_area": "Target sector or zone",\n'
             '  "estimated_duration_s": 120.0,\n'
-            '  "safety_rules": ["Stop if distance < 30cm", "Alert if person detected"],\n'
+            '  "safety_rules": ["Operator e-stop aborts the mission", "Alert if person detected"],\n'
             '  "steps": [\n'
             '    {\n'
             '      "step_number": 1,\n'
@@ -473,6 +481,45 @@ class GroqBrain:
             compiler_source="groq_cloud_lpu",
         )
 
+    def _compile_explicit_sequence(self, prompt: str, mission_id: str) -> Optional["MissionSpec"]:
+        """Turns "forward 100 cm then turn left 90 degrees" into steps, with no cloud and no invented moves."""
+        from intelligence.needle import needle_router  # lazy: avoids an import cycle
+
+        calls = needle_router.parse_sequence(prompt)
+        if not calls or not any(c["name"] in needle_router.MOTION_TOOLS for c in calls):
+            return None
+
+        steps = [
+            MissionStep(
+                step_number=i + 1,
+                title=c["reasoning"],
+                action_type="TOOL_EXECUTION",
+                tool_name=c["name"],
+                parameters=dict(c["arguments"]),
+                timeout_seconds=30.0,
+                completion_condition="motion_complete",
+            )
+            for i, c in enumerate(calls)
+        ]
+        steps.append(MissionStep(
+            step_number=len(steps) + 1,
+            title="Halt motors",
+            action_type="TOOL_EXECUTION",
+            tool_name="stop_rover",
+            parameters={},
+            timeout_seconds=2.0,
+        ))
+        return MissionSpec(
+            mission_id=mission_id,
+            title=f"Mission: {prompt[:40]}",
+            description=prompt,
+            target_area="Current position",
+            estimated_duration_s=sum(s.timeout_seconds for s in steps),
+            safety_rules=["Open-loop timed moves (no distance sensor)", "Operator e-stop aborts the mission"],
+            steps=steps,
+            compiler_source="local_sequence_parser",
+        )
+
     def _compile_via_local_engine(
         self,
         prompt: str,
@@ -483,6 +530,11 @@ class GroqBrain:
         text = prompt.lower()
         title = "Strategic Autonomous Mission"
         steps: List[MissionStep] = []
+
+        # If the prompt is a plain chain of drive/turn instructions, compile exactly that.
+        explicit = self._compile_explicit_sequence(prompt, mission_id)
+        if explicit is not None:
+            return explicit
 
         # Always step 1: Pre-flight telemetry and sensor health audit
         steps.append(MissionStep(
@@ -524,7 +576,7 @@ class GroqBrain:
                 title="Advance along Sector Alpha patrol lane",
                 action_type="TOOL_EXECUTION",
                 tool_name="move_forward",
-                parameters={"speed": 0.35, "duration_seconds": 3.0},
+                parameters={"distance_cm": 150.0},
                 timeout_seconds=6.0,
             ))
             steps.append(MissionStep(
@@ -532,7 +584,7 @@ class GroqBrain:
                 title="Execute 90° corner pivot toward East boundary",
                 action_type="TOOL_EXECUTION",
                 tool_name="turn_right",
-                parameters={"speed": 0.35, "degrees": 90.0, "duration_seconds": 0.6},
+                parameters={"degrees": 90.0},
                 timeout_seconds=4.0,
             ))
             steps.append(MissionStep(
@@ -540,7 +592,7 @@ class GroqBrain:
                 title="Traverse East perimeter segment",
                 action_type="TOOL_EXECUTION",
                 tool_name="move_forward",
-                parameters={"speed": 0.35, "duration_seconds": 3.0},
+                parameters={"distance_cm": 150.0},
                 timeout_seconds=6.0,
             ))
             steps.append(MissionStep(
@@ -560,7 +612,7 @@ class GroqBrain:
                 title="Cautious forward approach toward target object",
                 action_type="TOOL_EXECUTION",
                 tool_name="move_forward",
-                parameters={"speed": 0.25, "duration_seconds": 2.0},
+                parameters={"distance_cm": 60.0, "speed": 0.4},
                 timeout_seconds=5.0,
             ))
             steps.append(MissionStep(
@@ -580,7 +632,7 @@ class GroqBrain:
                 title="Execute forward traversal",
                 action_type="TOOL_EXECUTION",
                 tool_name="move_forward",
-                parameters={"speed": 0.35, "duration_seconds": 2.0},
+                parameters={"distance_cm": 100.0},
                 timeout_seconds=5.0,
             ))
             steps.append(MissionStep(
@@ -611,7 +663,7 @@ class GroqBrain:
             target_area="Facility Interior / Patrol Route",
             estimated_duration_s=total_est_seconds,
             safety_rules=[
-                "Front obstacle distance limit: 30cm (VL53L0X)",
+                "Open-loop timed moves (no distance sensor fitted)",
                 "Emergency halt on human detection within 150cm (Laya Tier 3)",
                 "Watchdog heartbeat limit: 600ms",
             ],
