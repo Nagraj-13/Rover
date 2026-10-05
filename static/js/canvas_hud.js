@@ -85,9 +85,18 @@ class RoverCanvasHUD {
     }
 
     render() {
-        const cw = this.canvas.width;
-        const ch = this.canvas.height;
-        if (cw === 0 || ch === 0) return;
+        let cw = this.canvas.width;
+        let ch = this.canvas.height;
+        if (cw === 0 || ch === 0) {
+            if (this.videoFeed && this.videoFeed.clientWidth > 0) {
+                this.canvas.width = this.videoFeed.clientWidth;
+                this.canvas.height = this.videoFeed.clientHeight;
+                cw = this.canvas.width;
+                ch = this.canvas.height;
+            } else {
+                return;
+            }
+        }
 
         this.ctx.clearRect(0, 0, cw, ch);
 

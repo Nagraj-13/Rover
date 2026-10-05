@@ -126,17 +126,31 @@ class RoverTelemetryClient {
         if (this.isConnected && this.socket && this.socket.readyState === WebSocket.OPEN) {
             this.socket.send(JSON.stringify(payload));
         } else {
-            // REST Fallback
-            fetch("/rover/api/control", {
+            // REST Fallback (Flask standard WSGI mode)
+            const endpoint = window.location.pathname.startsWith("/rover") ? "/rover/api/control" : "/api/control";
+            fetch(endpoint, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ command: command, speed: speed })
-            }).catch(e => console.error("[RoverWS] REST drive failed:", e));
+            }).then(r => r.json()).then(res => {
+                // Log only non-heartbeat or significant events
+                if (command !== "stop") {
+                    console.log(`[RoverWS] Motor ${command.toUpperCase()} @ ${Math.round(speed * 100)}%:`, res.success ? "ACK" : "NACK");
+                }
+            }).catch(e => {
+                // Secondary path fallback
+                fetch("/rover/api/control", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ command: command, speed: speed })
+                }).catch(err => console.error("[RoverWS] REST drive failed:", err));
+            });
         }
     }
 
     sendNLCommand(text) {
-        return fetch("/api/command/nl", {
+        const endpoint = window.location.pathname.startsWith("/rover") ? "/rover/api/command/nl" : "/api/command/nl";
+        return fetch(endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ prompt: text })
@@ -148,15 +162,19 @@ class RoverTelemetryClient {
         if (this.fallbackPollTimer) return;
         this.useFallback = true;
 
+        const pollEndpoint = window.location.pathname.startsWith("/rover") ? "/rover/api/detections" : "/api/detections";
+
         this.fallbackPollTimer = setInterval(async () => {
             try {
                 const t0 = performance.now();
-                const res = await fetch("/rover/api/detections");
+                const res = await fetch(pollEndpoint);
                 if (res.ok) {
                     const data = await res.json();
                     this.latencyMs = Math.round(performance.now() - t0);
                     this.notifyStatus(true, this.latencyMs);
-                    this.notifyTelemetry({ vision: data });
+                    // Pass full telemetry payload containing vision, safety, and rover telemetry
+                    const telemetryPayload = data.vision ? data : { vision: data };
+                    this.notifyTelemetry(telemetryPayload);
                 }
             } catch (e) {
                 this.notifyStatus(false, 0);

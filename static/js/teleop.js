@@ -30,33 +30,68 @@ class RoverTeleopController {
         buttons.forEach(button => {
             const command = button.dataset.command;
 
-            // Pointer down (Touch / Mouse press)
-            button.addEventListener("pointerdown", (e) => {
+            // Touch events for mobile devices (prevents pinch/scroll and ghost cancels)
+            button.addEventListener("touchstart", (e) => {
                 e.preventDefault();
-                try { button.setPointerCapture(e.pointerId); } catch (err) {}
+                this.startMovement(command, button);
+            }, { passive: false });
+
+            button.addEventListener("touchend", (e) => {
+                e.preventDefault();
+                if (this.activeCommand === command) {
+                    this.stopMovement();
+                }
+            }, { passive: false });
+
+            button.addEventListener("touchcancel", (e) => {
+                e.preventDefault();
+                if (this.activeCommand === command) {
+                    this.stopMovement();
+                }
+            }, { passive: false });
+
+            // Mouse events for desktop browsers
+            button.addEventListener("mousedown", (e) => {
+                if (e.button !== 0) return; // Left mouse button only
                 this.startMovement(command, button);
             });
 
-            // Pointer up (Release)
-            button.addEventListener("pointerup", (e) => {
-                e.preventDefault();
-                this.stopMovement();
+            button.addEventListener("mouseup", (e) => {
+                if (this.activeCommand === command) {
+                    this.stopMovement();
+                }
             });
 
-            // Pointer cancel / Lost capture
-            button.addEventListener("pointercancel", () => this.stopMovement());
-            button.addEventListener("lostpointercapture", () => {
-                if (this.activeCommand === command) this.stopMovement();
+            button.addEventListener("mouseleave", (e) => {
+                if (this.activeCommand === command) {
+                    this.stopMovement();
+                }
             });
+        });
+
+        // Global safety release if mouse button released outside target
+        document.addEventListener("mouseup", () => {
+            if (this.activeCommand) this.stopMovement();
+        });
+        document.addEventListener("touchend", (e) => {
+            if (e.touches.length === 0 && this.activeCommand) {
+                this.stopMovement();
+            }
         });
 
         // E-stop buttons
         const eStopBtns = document.querySelectorAll(".btn-estop, #eStopBtn");
         eStopBtns.forEach(btn => {
-            btn.addEventListener("click", () => {
+            btn.addEventListener("click", (e) => {
+                e.preventDefault();
                 this.stopMovement();
                 if (window.roverAudio) window.roverAudio.playEstopSound();
             });
+            btn.addEventListener("touchstart", (e) => {
+                e.preventDefault();
+                this.stopMovement();
+                if (window.roverAudio) window.roverAudio.playEstopSound();
+            }, { passive: false });
         });
     }
 

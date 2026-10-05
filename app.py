@@ -128,7 +128,7 @@ right_motor = Motor(
     pwm=True
 )
 
-motor_lock = threading.Lock()
+motor_lock = threading.RLock()
 
 current_command = "stop"
 current_speed = DEFAULT_SPEED
@@ -199,6 +199,7 @@ def execute_command(command, speed):
         current_speed = speed
         last_control_time = time.monotonic()
 
+    print(f"[CONTROL] Dispatched: {command.upper()} @ {int(speed * 100)}% PWM")
     return True
 
 
@@ -232,11 +233,12 @@ watchdog_thread.start()
 # VISION / YOLO DETECTOR SETUP
 # ============================================================
 
+# Start YOLO enabled by default so bounding boxes and detections appear immediately on boot
 detector = YOLODetector(
     model_name=YOLO_MODEL,
     conf_threshold=YOLO_DEFAULT_CONF,
     imgsz=YOLO_IMGSZ,
-    enabled=False
+    enabled=True
 )
 detector.start()
 
@@ -1226,6 +1228,7 @@ def video_stream():
 # ============================================================
 
 @app.route(f"{ROVER_PATH}/api/control", methods=["POST"])
+@app.route("/api/control", methods=["POST"])
 def control():
     data = request.get_json(silent=True) or {}
     command = data.get("command", "stop")
@@ -1265,6 +1268,7 @@ def control():
 # ============================================================
 
 @app.route(f"{ROVER_PATH}/api/status")
+@app.route("/api/status")
 def status():
     with motor_lock:
         cmd = current_command
@@ -1310,6 +1314,7 @@ def ws_telemetry_probe():
 # ============================================================
 
 @app.route(f"{ROVER_PATH}/api/detections")
+@app.route("/api/detections")
 def get_detections():
     """Returns the latest YOLO object detections and integrated World State."""
     detector_status = detector.get_status()
