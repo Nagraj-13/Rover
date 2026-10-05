@@ -12,8 +12,9 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 try:
     from gpiozero import Motor
     GPIOZERO_AVAILABLE = True
-except (ImportError, Exception):
+except (ImportError, Exception) as _gpio_err:
     GPIOZERO_AVAILABLE = False
+    print(f"!!! WARNING: gpiozero unavailable ({_gpio_err}). Using MOCK motors - NO GPIO OUTPUT WILL OCCUR !!!")
     class MockMotor:
         def __init__(self, forward=None, backward=None, pwm=True):
             self.forward_pin = forward
@@ -1259,7 +1260,9 @@ def control():
         "success": success,
         "command": command,
         "speed": speed,
-        "obstacle_close": distance_sensor.is_obstacle_close()
+        "obstacle_close": distance_sensor.is_obstacle_close(),
+        "distance_cm": distance_sensor.get_distance_cm(),
+        "gpio_active": GPIOZERO_AVAILABLE
     })
 
 
