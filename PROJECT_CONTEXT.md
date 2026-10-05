@@ -1518,3 +1518,17 @@ The web interface should remain useful even after autonomy is introduced, becomi
 
 The architecture should therefore keep **manual control, perception, safety, and autonomy as separate layers** rather than building the entire system as one monolithic Python script.
 
+---
+
+# 25. Update: Open-Loop Motion, Missions and Evidence Log
+
+Current state after the sensor-less build:
+
+* **VL53L0X removed.** `sensors/distance.py` still exists but is disabled unless `ROVER_DISTANCE_SENSOR=1`. While disabled it never polls, the 30 cm forward interceptor is skipped, and telemetry reports a fixed 999 cm.
+* **Dead-reckoning motion (`motion.py`).** `Calibration` (cm/s, deg/s, deadband, default speeds, settle time, persisted to `calibration.json`), `MotionController` (single worker thread, FIFO queue of timed moves, cancellable, feeds the watchdog while a move runs) and `MissionRunner` (executes compiled mission steps sequentially, reports per-step status, abortable).
+* **Why the watchdog needed a heartbeat from the worker:** the 0.6 s watchdog stops any motor command that is not refreshed, so a single long timed move was being cut short. The worker now touches the heartbeat every 50 ms.
+* **Cancellation rules:** any `/api/control` request, the E-STOP, or a `stop` command calls `emergency_stop()` (abort mission, drop queue, stop motors). The browser only sends passive stops (tab blur, button release) if it was actually driving, so they cannot cancel a mission.
+* **Parsing:** `intelligence/needle.py` parses distances/angles/speeds and chains ("then", "and", commas) deterministically before the Cactus model or Groq is consulted. A chain is only run on the edge if every part is understood. Strategic words (patrol, inspect, loop, until...) still escalate to Groq; a short stop command always wins.
+* **Groq prompt** states the hardware facts (no sensor, fixed camera, open loop, use `distance_cm` / `degrees`). The offline compiler uses the same parser for plain drive/turn prompts.
+* **Evidence log:** `/api/evidence` lists saved snapshots, `/evidence/<file>.jpg` serves them, and the Event Log tab shows thumbnails. `capture_evidence` tool results must stay JSON-safe (raw JPEG bytes are stripped).
+* **Known limits:** no obstacle detection while the sensor is off; accuracy depends on calibration and surface; turns on carpet drift most. `python test_motion.py` covers the parser, timing, cancellation, missions and calibration without hardware.

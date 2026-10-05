@@ -2,6 +2,8 @@
 
 This document details the interface wiring for the **Raspberry Pi Camera 3** and the **VL53L0X Time-of-Flight (ToF)** distance sensor.
 
+> **Note:** the VL53L0X is currently **not fitted** and is disabled in software. Without it the rover drives open loop and cannot detect obstacles. After wiring it, start the app with `ROVER_DISTANCE_SENSOR=1 python3 app.py` to re-enable the 30 cm forward block and live range telemetry.
+
 ---
 
 ## 1. Raspberry Pi Camera 3 Interface

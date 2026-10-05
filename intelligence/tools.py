@@ -457,6 +457,18 @@ class ToolRegistry:
                 output=output,
                 execution_time_ms=execution_time_ms,
             )
+        except ValueError as e:
+            # Rejected input (e.g. a move longer than the safety limit), not a crash: no traceback.
+            logger.warning("Tool %s rejected: %s", tool_name, e)
+            res = ToolExecutionResult(
+                success=False,
+                tool_name=tool_name,
+                arguments=arguments,
+                error=str(e),
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+            )
+            self._execution_history.append(res)
+            return res
         except Exception as e:
             logger.error("Error executing tool %s: %s", tool_name, e, exc_info=True)
             res = ToolExecutionResult(

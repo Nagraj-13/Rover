@@ -23,6 +23,8 @@ document.addEventListener("DOMContentLoaded", () => {
             const panel = document.getElementById(targetTab);
             if (panel) panel.classList.add("active");
 
+            if (targetTab === "tab-events") loadEvidence();
+
             // Re-render HUD if switching to teleop tab
             if (targetTab === "tab-teleop") {
                 setTimeout(() => hud.render(), 50);
@@ -135,13 +137,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 const result = await res.json();
                 if (result.success) {
                     showToast("Evidence snapshot captured & logged!");
-                    addEventCard({
-                        title: "Manual Evidence Capture",
-                        severity: "info",
-                        timestamp: new Date().toLocaleTimeString(),
-                        meta: "Operator Triggered",
-                        imgPath: result.image_path
-                    });
+                    loadEvidence();
                 } else {
                     showToast("Snapshot failed: " + (result.error || "Unknown"));
                 }
@@ -175,8 +171,9 @@ document.addEventListener("DOMContentLoaded", () => {
             if (data.success) {
                 showToast(data.message || `Executed: ${data.tool_called || "Command acknowledged"}`);
                 if (data.mission && data.mission_started) renderMission(data.mission, true);
+                if (data.tool_called && data.tool_called.includes("capture_evidence")) loadEvidence();
             } else {
-                showToast(`Error: ${data.error || "Unable to parse command"}`);
+                showToast(`Error: ${data.error || data.message || "Unable to parse command"}`);
             }
         } catch (e) {
             // Direct tool fallback simulation
@@ -551,3 +548,71 @@ function addEventCard(evt) {
     `;
     list.prepend(card);
 }
+
+
+// Evidence log: snapshots saved on the Pi (thumbnail + reason + detections)
+async function loadEvidence() {
+    const list = document.getElementById("eventListContainer");
+    if (!list) return;
+    try {
+        const res = await fetch("/rover/api/evidence?limit=60");
+        const data = await res.json();
+        if (!data.success) return;
+
+        list.querySelectorAll("[data-evidence]").forEach(el => el.remove());
+        // prepend newest-last so the newest ends up on top
+        data.evidence.slice().reverse().forEach(ev => list.prepend(buildEvidenceCard(ev)));
+    } catch (e) {
+        console.warn("Evidence list unavailable:", e);
+    }
+}
+
+function buildEvidenceCard(ev) {
+    const card = document.createElement("div");
+    card.className = `event-card severity-${ev.severity}`;
+    card.dataset.evidence = ev.id;
+
+    const link = document.createElement("a");
+    link.href = ev.image_url;
+    link.target = "_blank";
+    link.rel = "noopener";
+    const img = document.createElement("img");
+    img.className = "evidence-thumb";
+    img.loading = "lazy";
+    img.src = ev.image_url;
+    img.alt = "Evidence snapshot";
+    link.appendChild(img);
+
+    const info = document.createElement("div");
+    info.className = "event-info";
+    info.style.flex = "1";
+    const title = document.createElement("span");
+    title.className = "event-title";
+    title.textContent = `📷 ${ev.reason || "Evidence snapshot"}`;
+    const meta = document.createElement("div");
+    meta.className = "event-meta";
+    const when = ev.timestamp ? new Date(ev.timestamp).toLocaleString() : "";
+    const seen = ev.detections_count ? `${ev.detections_count} detected: ${ev.labels.join(", ")}` : "No detections";
+    [`⏱️ ${when}`, `🎯 ${seen}`].forEach(t => {
+        const span = document.createElement("span");
+        span.textContent = t;
+        meta.appendChild(span);
+    });
+    info.append(title, meta);
+
+    const pill = document.createElement("span");
+    pill.className = "hud-pill";
+    pill.textContent = ev.severity.toUpperCase();
+
+    card.append(link, info, pill);
+    return card;
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    loadEvidence();
+    // keep the log fresh while the Events tab is open (captures can also come from missions)
+    setInterval(() => {
+        const panel = document.getElementById("tab-events");
+        if (panel && panel.classList.contains("active")) loadEvidence();
+    }, 5000);
+});

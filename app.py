@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import io
+import json
 import logging
 import os
 import threading
@@ -406,6 +407,12 @@ def tool_scan_surroundings(degrees=360.0, speed=None):
     return planned_move("right", speed, None, None, degrees)
 
 
+def tool_capture_evidence(reason="Surveillance event", severity="INFO"):
+    """Save the snapshot and return only JSON-safe metadata (the raw JPEG bytes stay on disk)."""
+    result = detector.capture_evidence(reason=reason, severity=severity)
+    return {k: v for k, v in result.items() if not isinstance(v, (bytes, bytearray))}
+
+
 # Bind Rover Hardware into strictly typed Tool Registry
 tool_registry.register_tool("scan_surroundings", tool_scan_surroundings)
 tool_registry.bind_rover_hardware(
@@ -414,7 +421,7 @@ tool_registry.bind_rover_hardware(
     turn_left_fn=tool_turn_left,
     turn_right_fn=tool_turn_right,
     stop_rover_fn=emergency_stop,
-    capture_evidence_fn=lambda reason="Surveillance event", severity="INFO": detector.capture_evidence(reason=reason, severity=severity),
+    capture_evidence_fn=tool_capture_evidence,
     get_telemetry_fn=lambda: build_current_world_state().to_dict(),
 )
 
@@ -1471,6 +1478,51 @@ def capture_snapshot():
     # Strip binary bytes from JSON response
     result_json = {k: v for k, v in result.items() if k != "jpeg_bytes"}
     return jsonify(result_json)
+
+
+# ============================================================
+# EVIDENCE LOG (snapshots saved by detector.capture_evidence)
+# ============================================================
+
+@app.route(f"{ROVER_PATH}/api/evidence")
+@app.route("/api/evidence")
+def list_evidence():
+    """Newest-first list of saved evidence snapshots with their metadata."""
+    try:
+        limit = max(1, min(200, int(request.args.get("limit", 60))))
+    except ValueError:
+        limit = 60
+
+    evidence_dir = detector.evidence_dir.resolve()
+    items = []
+    if evidence_dir.is_dir():
+        for meta_path in sorted(evidence_dir.glob("evidence_*.json"), reverse=True):
+            img_name = meta_path.with_suffix(".jpg").name
+            if not (evidence_dir / img_name).is_file():
+                continue
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            items.append({
+                "id": meta_path.stem,
+                "timestamp": meta.get("timestamp"),
+                "reason": meta.get("reason", ""),
+                "severity": str(meta.get("severity", "INFO")).lower(),
+                "detections_count": meta.get("detections_count", 0),
+                "labels": sorted({d.get("label") for d in meta.get("detections", []) if d.get("label")}),
+                "image_url": f"{ROVER_PATH}/evidence/{img_name}",
+            })
+            if len(items) >= limit:
+                break
+    return jsonify({"success": True, "count": len(items), "evidence": items})
+
+
+@app.route(f"{ROVER_PATH}/evidence/<path:filename>")
+def serve_evidence(filename):
+    if not filename.endswith(".jpg"):
+        return jsonify({"success": False, "error": "Not found"}), 404
+    return send_from_directory(str(detector.evidence_dir.resolve()), filename)
 
 
 # ============================================================

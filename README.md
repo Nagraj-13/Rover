@@ -13,11 +13,12 @@ An edge-first autonomous and teleoperated 4-wheel drive (4WD) robotic platform p
 - **Persistent Multi-Object Tracking & Locking:** ByteTrack tracking assigns persistent IDs (`#1`, `#2`) across frames; click or tap on any bounding box to lock target.
 - **Monocular Distance Estimation:** Pinhole camera geometry calibrated for Pi Camera 3 estimates object distance in centimeters in real-time.
 - **Deterministic Hardware Safety Interceptor:**
-  - Front **VL53L0X Time-of-Flight laser sensor** automatically suppresses forward drive commands if an obstacle is within `<30 cm`.
+  - Optional front **VL53L0X Time-of-Flight laser sensor** suppresses forward drive commands if an obstacle is within `<30 cm`. It is **off by default** (see [Open-Loop Motion](#open-loop-motion-distance--angle-commands)); set `ROVER_DISTANCE_SENSOR=1` once one is fitted.
   - Software watchdog automatically stops all motors if network control heartbeat is lost for `>600 ms`.
+- **Dead-Reckoning Motion & Missions:** "Go straight 100 cm then turn left" is converted to motor-on time from a per-robot calibration, runs in order on the edge, and missions execute step by step with live status.
 - **Zero-Dependency Lightweight Web GCS:** Built entirely in Vanilla HTML5, modern cyberpunk glassmorphic CSS3, and ES6+ JavaScript. **Zero Node.js, zero npm, and zero build compilation required** on the Raspberry Pi.
 - **In-Browser Audio Alerts:** Web Audio API synthesizer generates procedural proximity warning chirps and security sirens without external audio files.
-- **Surveillance Evidence Capture:** Captures high-resolution annotated snapshots with structured JSON metadata for surveillance audits and Telegram alerting.
+- **Surveillance Evidence Capture:** Captures high-resolution annotated snapshots with structured JSON metadata for surveillance audits and Telegram alerting. Every snapshot appears with a thumbnail in the Event Log tab.
 
 ---
 
@@ -231,8 +232,8 @@ The dashboard is a single-page application organized into **5 dedicated tabs**:
   - **Mobile Touch:** Press and hold `▲`, `▼`, `◀`, `▶`. The Pointer Events API (`setPointerCapture`) guarantees motors halt even if your finger slides off the button.
   - **Desktop Keyboard:** `W` (Forward), `S` (Backward), `A` (Left), `D` (Right), `Spacebar` (Emergency Stop).
   - **Speed Throttle:** Adjust motor PWM from 15% to 100% dynamically.
-  - **Master E-Stop:** Large red button instantly terminates motor PWM.
-- **Natural Language Command Bar:** Type instructions like *"move forward"*, *"turn left"*, *"stop"*, or *"capture photo"*.
+  - **Master E-Stop:** Large red button (or `Space`) instantly terminates motor PWM, drops queued moves and **aborts any running mission**. Releasing a button or switching browser tabs only stops manual driving; it never cancels a mission.
+- **Natural Language Command Bar:** Type instructions like *"go forward 100 cm then turn left 90 degrees"*, *"reverse 50 cm"*, *"turn around"*, *"stop"*, or *"take a photo"*. See [Open-Loop Motion](#open-loop-motion-distance--angle-commands) for the full grammar.
 - **Snap Evidence:** Manually trigger a high-resolution snapshot with bounding box overlays.
 
 ### Tab 2: Missions & Autonomy
@@ -240,14 +241,18 @@ The dashboard is a single-page application organized into **5 dedicated tabs**:
 - **Dynamic Groq Model Selector:** Switch on-the-fly between `openai/gpt-oss-120b`, `openai/gpt-oss-20b`, `qwen/qwen3.8-27b`, and `allam-2-7b`.
 - **Dynamic API Key Banner:** If `GROQ_API_KEY` is not detected in `.env`, an in-browser key input with a "Persist to .env" toggle appears directly above the prompt bar.
 - Pre-configured mission chips for quick tactical dispatch.
-- Visual waypoint checklist and real-time mission execution progress graph.
+- **Compile & Launch** compiles the prompt (Groq, or the local compiler when offline) and **runs it immediately**. Each step shows live status (pending, running, done, failed, aborted, skipped); press E-STOP to abort.
+- Plain drive/turn prompts (*"forward 30 cm then turn right 45 degrees"*) are compiled exactly as written by the local parser, with no invented extra moves.
+- A mission typed into the Natural Language bar that needs the cloud brain also starts automatically.
+- Only one mission runs at a time; starting a second returns HTTP 409.
 
 ### Tab 3: Event Log & Evidence Gallery
-- Chronological stream of surveillance events (`INFO`, `WARNING`, `CRITICAL`).
-- Displays timestamps, trigger reason, and thumbnail evidence previews.
+- Every snapshot saved in `evidence/` is listed newest first with a **thumbnail** (click to open full size), the trigger reason, timestamp, what YOLO detected, and a severity pill (`INFO`, `WARNING`, `CRITICAL`).
+- Snapshots come from the **Snap Evidence** button, the command bar (*"take a photo"*), or mission steps.
+- The list loads on page open, when you open the tab, after each capture, and refreshes every 5 s while the tab is open.
 
 ### Tab 4: Sensors & System Diagnostics
-- **VL53L0X Laser Distance Bar:** Real-time visual gauge showing distance and 30cm cutoff indicator.
+- **VL53L0X Laser Distance Bar:** Real-time visual gauge showing distance and 30cm cutoff indicator. With the sensor disabled (default) it shows a fixed "clear" value.
 - **CPU Thermals:** Raspberry Pi 5 temperature readout with thermal throttling indicator.
 - **RAM & Disk Utilization:** Real-time system resource health.
 - **12V Drive Battery:** Voltage estimation and charge state.
@@ -256,6 +261,101 @@ The dashboard is a single-page application organized into **5 dedicated tabs**:
 - **Groq Cloud Brain Settings:** View active model, live dropdown selector, masked API key, and "Save to .env" checkbox.
 - YOLO Object Detection toggle (enables/disables inference thread on the fly).
 - Confidence threshold slider (10% to 90%).
+
+---
+
+## Open-Loop Motion (Distance & Angle Commands)
+
+The rover has no encoders, IMU, camera servo and (by default) no distance sensor, so it
+drives **open loop**: `motion.py` converts a requested distance or angle into motor-on time
+using measured constants, then stops. Accuracy depends on calibration, floor surface,
+battery level and wheel slip, and **nothing will stop the rover before it hits an obstacle**.
+
+### What you can type
+
+| Command | Result |
+| :--- | :--- |
+| `go straight for 100 cm` | forward 100 cm |
+| `move forward 1.5 meters` | forward 150 cm (units: mm, cm, m, ft, inch) |
+| `reverse 20 cm` / `go back 50 cm` | backward |
+| `turn left` / `turn right 45 degrees` | in-place pivot (default 90 degrees) |
+| `turn around` / `u-turn` | 180 degrees clockwise |
+| `forward 2 seconds` | time-based move (when no distance is given) |
+| `forward 50 cm at 70% speed` | explicit throttle (also `slow`, `fast`, `max`) |
+| `forward 100 cm then turn left 90 degrees, then forward 50 cm` | chained, run in order (`then`, `and`, `,`, `;`) |
+| `stop` / `halt` / `abort mission` | cancels everything immediately |
+
+A chain runs on the edge only if **every** part is understood; otherwise the whole prompt
+goes to the Groq mission compiler. Prompts with strategic words (`patrol`, `inspect`, `loop`,
+`until`, ...) always go to Groq. Number words `one` to `ten` are accepted.
+
+### How timing is calculated
+
+```text
+effective = (throttle - deadband) / (1 - deadband)        # 0 at the deadband, 1 at full power
+drive time = distance_cm / (cm_per_s_full  * effective)
+turn time  = degrees     / (deg_per_s_full * effective)
+```
+
+- Throttle below `deadband + 0.05` is raised to that floor so a slow request cannot stall.
+- A single move longer than 120 s is refused with a clear error (for example a mistyped 50 m).
+- Moves are queued and run one at a time, with a 0.3 s settle pause between them so momentum
+  does not skew the next turn. The safety watchdog is fed while a move runs.
+- Any manual drive command or E-STOP cancels the queue and the running move.
+- The camera is fixed to the chassis, so `scan_surroundings` rotates the **whole rover**.
+
+### Calibrate (do this first)
+
+The shipped constants are guesses. Per floor surface and battery level, run *"forward 100 cm"*,
+measure the real distance, then tell the rover (values are saved to `calibration.json`):
+
+```bash
+curl -X POST localhost:8080/rover/api/calibration/adjust -H 'Content-Type: application/json' \
+     -d '{"axis":"linear","commanded":100,"measured":82}'
+# same for turns: run "turn left 90 degrees", measure the real angle
+curl -X POST localhost:8080/rover/api/calibration/adjust -H 'Content-Type: application/json' \
+     -d '{"axis":"turn","commanded":90,"measured":70}'
+```
+
+Each call multiplies the speed constant by `measured / commanded`, so repeat until the result is close.
+Other settings can be set directly with `POST /rover/api/calibration`:
+
+| Key | Default | Meaning |
+| :--- | :--- | :--- |
+| `cm_per_s_full` | 60 | straight-line speed at full effective throttle |
+| `deg_per_s_full` | 220 | pivot rate at full effective throttle |
+| `deadband` | 0.20 | throttle below which the wheels do not move; raise it if low speeds stall |
+| `drive_speed` | 0.50 | throttle used when a drive command gives no speed |
+| `turn_speed` | 0.50 | throttle used when a turn gives no speed (skid-steer needs more torque) |
+| `settle_s` | 0.30 | pause after each move |
+
+### Distance sensor (optional)
+
+The VL53L0X is **disabled by default**: no polling, no 30 cm forward block, and telemetry reports
+a fixed 999 cm "clear". After fitting one, start with:
+
+```bash
+ROVER_DISTANCE_SENSOR=1 python3 app.py
+```
+
+### API reference (most routes also exist without the `/rover` prefix)
+
+| Method & path | Purpose |
+| :--- | :--- |
+| `POST /rover/api/control` | manual drive `{"command":"forward","speed":0.5}`; cancels any mission or queued moves |
+| `POST /rover/api/command/nl` | natural-language command bar `{"prompt":"..."}` |
+| `POST /rover/api/missions/create` | compile a prompt into a mission (does not run it) |
+| `POST /rover/api/missions/execute` | run `{"mission": {...}}` or `{"prompt": "..."}`; 409 if one is already running |
+| `GET  /rover/api/missions/status` | mission state (`idle`, `running`, `completed`, `failed`, `aborted`), per-step status, motion queue |
+| `POST /rover/api/missions/abort` | emergency stop and abort |
+| `GET/POST /rover/api/calibration` | read or set calibration values |
+| `POST /rover/api/calibration/adjust` | scale a constant from a measured result |
+| `GET  /rover/api/evidence?limit=60` | saved snapshots, newest first (reason, severity, labels, `image_url`) |
+| `GET  /rover/evidence/<file>.jpg` | the snapshot image |
+| `POST /rover/api/vision/capture` | take a snapshot now |
+| `GET  /rover/api/status` | rover, safety, motion, mission, vision and Laya telemetry |
+
+Offline checks for the parser, timing, cancellation, missions and calibration (no GPIO needed): `python test_motion.py`.
 
 ---
 
@@ -349,7 +449,11 @@ journalctl -u rover.service -f
 
 ```text
 Rover/
-├── app.py                      # Main control server, Picamera2 stream, motor API & GCS host
+├── app.py                      # Main control server, Picamera2 stream, motor/mission/evidence APIs & GCS host
+├── motion.py                   # Dead-reckoning motion queue, calibration & mission runner
+├── test_motion.py              # Offline tests for parser, timing, cancel, missions, calibration
+├── calibration.json            # Created on first calibration (per-robot speed/turn constants)
+├── evidence/                   # Saved snapshots (.jpg) and metadata (.json)
 ├── requirements.txt            # Python dependencies (Flask, gpiozero, ultralytics, ToF, groq, cactus, laya)
 ├── .env.example                # Template for Groq API keys and default model configuration
 ├── sample_intelligence_demo.py # Complete 3-tier simulation & academic benchmark suite
@@ -382,7 +486,7 @@ Rover/
 │
 ├── sensors/                    # Hardware sensor drivers
 │   ├── __init__.py             # Sensors package exports
-│   └── distance.py             # VL53L0X ToF laser distance sensor driver with safety cutoff
+│   └── distance.py             # VL53L0X ToF driver with safety cutoff (off unless ROVER_DISTANCE_SENSOR=1)
 │
 └── circuits/                   # Complete electrical and wiring schematics
     ├── README.md               # Electrical documentation overview & architecture
@@ -397,7 +501,9 @@ Rover/
 ## Troubleshooting
 
 ### Motors don't move or only click
-1. **Obstacle Interceptor Active:** If an object is closer than 30 cm to the front VL53L0X sensor, forward drive is automatically blocked by the safety controller. Check the distance readout on the GCS dashboard. Reverse and turns will still work.
+0. **Read the startup log.** `Using MOCK motors` means `gpiozero` failed to import, so no pin is driven. Create the venv with `--system-site-packages` or `pip install gpiozero lgpio`. If commands print `[CONTROL] Dispatched` the software is fine and the cause is wiring, motor power or too-low throttle.
+1. **Obstacle Interceptor Active (only if `ROVER_DISTANCE_SENSOR=1`):** If an object is closer than 30 cm to the front VL53L0X sensor, forward drive is blocked. Reverse and turns still work.
+1b. **Throttle too low:** geared motors often hum without turning at low duty. Raise the speed slider or the `deadband` calibration value.
 2. **Check Common Ground:** Ensure the 12V battery negative terminal is connected directly to a Raspberry Pi ground pin (Pin 6, 9, 14, or 20).
 3. **Check Enable Pins:** Verify that `R_EN` and `L_EN` on both IBT-2 drivers are connected to 5V (Pins 2 and 4).
 4. **Check Fuse:** Ensure the 12V motor battery inline fuse is intact.
@@ -413,7 +519,17 @@ If one side turns backward when driving forward:
 - Verify camera detection with `rpicam-hello --list-cameras`.
 - Do not use `MJPEGEncoder(num_buffers=4)` on Raspberry Pi 5. The codebase uses `MJPEGEncoder()`.
 
+### Distances or turn angles are wrong
+Calibrate (see [Open-Loop Motion](#open-loop-motion-distance--angle-commands)). Re-calibrate after changing floor, battery or tyres. Turns drift the most on carpet.
+
+### "Move would take NNN s (limit 120 s)"
+The requested distance is too long for the current calibration (often a mistyped unit such as `50 m`). Shorten it, or calibrate if the rover is faster than the defaults assume.
+
+### Mission stops immediately or never starts
+`GET /rover/api/missions/status` shows the failing step and its error. A `409` from `/missions/execute` means another mission is still running; press E-STOP.
+
 ### Distance sensor not detected
+This only matters when `ROVER_DISTANCE_SENSOR=1`; the sensor is off by default.
 - Check I2C detection with `i2cdetect -y 1`. Address `0x29` must be present.
 - Verify wiring: Pin 1 (3.3V), Pin 3 (SDA), Pin 5 (SCL), Pin 9 (GND).
 
@@ -440,27 +556,3 @@ By default, pip on ARM64 may attempt to download massive NVIDIA CUDA packages (>
 ## License
 
 This project is open-source. Feel free to modify and expand for educational, robotics, and research applications.
-
-## Distance and turn commands (no sensors, no camera servo)
-
-With no VL53L0X, encoders or IMU, the rover drives **open loop**: `motion.py` converts a
-distance or angle into motor-on time using `calibration.json` (created on first calibration;
-defaults live in `motion.py`).
-
-- "go straight for 100 cm then turn left" runs on the edge in order, no cloud call.
-- Missions (`Compile & Launch`) now actually execute, with live step status. The E-STOP button aborts them.
-- The camera is fixed, so "scan" rotates the whole rover.
-- Enable the obstacle sensor again with `ROVER_DISTANCE_SENSOR=1 python3 app.py`.
-
-**Calibrate once per floor surface / battery level.** Send "forward 100 cm", measure the real distance, then:
-
-```bash
-curl -X POST localhost:8080/rover/api/calibration/adjust -H 'Content-Type: application/json' \
-     -d '{"axis":"linear","commanded":100,"measured":82}'
-# same for turns: "turn left 90 degrees", measure the real angle
-curl -X POST localhost:8080/rover/api/calibration/adjust -H 'Content-Type: application/json' \
-     -d '{"axis":"turn","commanded":90,"measured":70}'
-```
-
-`deadband` is the throttle below which the wheels do not move; raise it via
-`POST /rover/api/calibration {"deadband":0.25}` if low speeds stall. Offline checks: `python test_motion.py`.

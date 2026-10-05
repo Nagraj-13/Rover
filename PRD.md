@@ -332,26 +332,26 @@ ROVER_TOOLS = [
     # Actuator & Movement Tools
     {
         "name": "move_forward",
-        "description": "Drive rover forward for a specific duration or until stopped",
+        "description": "Drive rover forward a set distance (preferred) or time. Open loop: the controller converts distance to motor-on time from calibration.json",
         "parameters": {
             "type": "object",
             "properties": {
-                "speed": {"type": "number", "minimum": 0.1, "maximum": 1.0, "default": 0.35},
+                "speed": {"type": "number", "minimum": 0.1, "maximum": 1.0},
+                "distance_cm": {"type": "number", "minimum": 1.0, "maximum": 5000.0},
                 "duration_seconds": {"type": "number", "minimum": 0.1, "maximum": 60.0}
-            },
-            "required": ["duration_seconds"]
+            }
         }
     },
     {
         "name": "move_backward",
-        "description": "Drive rover in reverse for a specific duration",
+        "description": "Drive rover in reverse a set distance (preferred) or time",
         "parameters": {
             "type": "object",
             "properties": {
-                "speed": {"type": "number", "minimum": 0.1, "maximum": 1.0, "default": 0.30},
+                "speed": {"type": "number", "minimum": 0.1, "maximum": 1.0},
+                "distance_cm": {"type": "number", "minimum": 1.0, "maximum": 5000.0},
                 "duration_seconds": {"type": "number", "minimum": 0.1, "maximum": 30.0}
-            },
-            "required": ["duration_seconds"]
+            }
         }
     },
     {
@@ -361,7 +361,7 @@ ROVER_TOOLS = [
             "type": "object",
             "properties": {
                 "speed": {"type": "number", "default": 0.35},
-                "degrees": {"type": "number", "description": "Optional degrees to turn (approximate)"}
+                "degrees": {"type": "number", "description": "Degrees to pivot in place (default 90); converted to motor-on time"}
             }
         }
     },
@@ -755,3 +755,17 @@ For academic defense and project evaluation, EdgeRover provides empirical compar
 - [ ] Run comparative latency benchmarks (Needle vs. Groq, NCNN vs. ONNX).
 - [ ] Execute continuous 30-minute autonomous perimeter patrol test.
 - [ ] Complete final technical paper / project report and demonstration rehearsal.
+
+---
+
+## Addendum: Open-Loop Motion & Hardware Reality (current build)
+
+The current robot has **no distance sensor, encoders, IMU or camera pan/tilt servo**. Consequences for this spec:
+
+- Movement tools take `distance_cm` / `degrees`; `motion.py` converts them to motor-on time with per-robot constants in `calibration.json` (see README, "Open-Loop Motion"). Planners must not compute durations themselves.
+- `duration_seconds` is only a fallback when no distance is given. Where both `distance_cm`/`degrees` and a duration are supplied, the distance/angle wins.
+- The 30 cm VL53L0X safety interceptor and range telemetry are disabled unless `ROVER_DISTANCE_SENSOR=1`; WorldState reports a fixed 999 cm.
+- `scan_surroundings` rotates the whole chassis because the camera cannot pan.
+- Missions are executed by `MissionRunner` (sequential, one at a time, abortable); an operator E-STOP or any manual drive command aborts them.
+- Safety limits: a single move may not exceed 120 s; the 600 ms control watchdog is fed while a timed move runs.
+- Evidence snapshots are listed by `GET /rover/api/evidence` and shown in the GCS Event Log tab.
